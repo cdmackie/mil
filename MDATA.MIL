@@ -331,21 +331,25 @@ LIST registers = 20
           DB ASSIGN_REGW,'SP',0
 
 LIST operations = 7
-           DB ASSIGN_EQUAL,'=',0,0
-           DB ASSIGN_ADDEQUAL,'+=',0
-           DB ASSIGN_SUBEQUAL,'-=',0
-           DB ASSIGN_INC,'++',0
-           DB ASSIGN_DEC,'--',0
-           DB ASSIGN_ADD,'+',0,0
-           DB ASSIGN_SUB,'-',0,0
+           DB ASSIGN_EQUAL,'=',0,0,0
+           DB ASSIGN_ADDEQUAL,'+=',0,0
+           DB ASSIGN_SUBEQUAL,'-=',0,0
+           DB ASSIGN_INC,'++',0,0
+           DB ASSIGN_DEC,'--',0,0
+           DB ASSIGN_ADD,'+',0,0,0
+           DB ASSIGN_SUB,'-',0,0,0
 
-LIST conditions = 6
-           DB ASSIGN_EQUAL,'=',0,0
-           DB ASSIGN_NOTEQUAL,'<>',0
-           DB ASSIGN_LESS,'<',0,0
-           DB ASSIGN_GREATER,'>',0,0
-           DB ASSIGN_ELESS,'<=',0
-           DB ASSIGN_EGREATER,'>=',0
+LIST conditions = 10
+           DB ASSIGN_EQUAL,'=',0,0,0
+           DB ASSIGN_NOTEQUAL,'<>',0,0
+           DB ASSIGN_LESS,'<',0,0,0
+           DB ASSIGN_GREATER,'>',0,00,0
+           DB ASSIGN_ELESS,'<=',0,0
+           DB ASSIGN_EGREATER,'>=',0,0
+           DB ASSIGN_SLESS,'#<',0,0
+           DB ASSIGN_SGREATER,'#>',0,0
+           DB ASSIGN_SELESS,'#<=',0
+           DB ASSIGN_SEGREATER,'#>=',0
 
 BYTE default_number
 BYTE default_data
@@ -390,6 +394,7 @@ LIST procblkst (BLKST)
 LIST parasblkst (BLKST)
 LIST current_proc_name (80)
 LIST procdef_string (80)
+LIST tempdef_string (80)
 LIST proccall_string (80)
 LIST procparam_string (80)
 
@@ -498,4 +503,4 @@ MESSAGE invalidmodule = 'Invalid MODULE type'
 MESSAGE unknown = 'Unrecognised command'
 MESSAGE invalidarray = 'Incorrect syntax for ARRAY'
 MESSAGE invalidof = 'Invalid syntax for OF'
-TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port Ä    
+TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port      

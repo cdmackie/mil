@@ -10,6 +10,8 @@ EXTERNAL FAR parsesourceline (WORD)
 EXTERNAL FAR translatesource (WORD,WORD,WORD)
 EXTERNAL FAR dealocall (WORD)
 EXTERNAL FAR dstrcpy (WORD,WORD,BYTE)
+EXTERNAL FAR d2strcpy (WORD,WORD,BYTE,BYTE)
+EXTERNAL FAR d3strcpy (WORD,WORD,BYTE,BYTE,BYTE)
 EXTERNAL FAR writenumber (WORD,BYTE)
 EXTERNAL FAR storeglobal (WORD)
 EXTERNAL FAR storelocal (WORD)
@@ -71,17 +73,26 @@ WORD flags = OFFSET nequal  ; JNZ     Z
       DW OFFSET abveq   ; JAE
 
 WORD comparisons = OFFSET equal   ; =
-            DW OFFSET nequal
-            DW OFFSET nequal  ; !=
-            DW OFFSET equal
-            DW OFFSET below   ; <
-            DW OFFSET abveq
-            DW OFFSET abv     ; >
-            DW OFFSET beleq
-            DW OFFSET beleq   ; <=
-            DW OFFSET abv
-            DW OFFSET abveq   ; >=
-            DW OFFSET below
+                DW OFFSET nequal
+                DW OFFSET nequal  ; !=
+                DW OFFSET equal
+                DW OFFSET below   ; <
+                DW OFFSET abveq
+                DW OFFSET abv     ; >
+                DW OFFSET beleq
+                DW OFFSET beleq   ; <=
+                DW OFFSET abv
+                DW OFFSET abveq   ; >=
+                DW OFFSET below
+
+                DW OFFSET sbelow   ; #<
+                DW OFFSET sabveq
+                DW OFFSET sabv     ; #>
+                DW OFFSET sbeleq
+                DW OFFSET sbeleq   ; #<=
+                DW OFFSET sabv
+                DW OFFSET sabveq   ; #>=
+                DW OFFSET sbelow
 
 MESSAGE equal = 'JZ'
 MESSAGE nequal = 'JNZ'
@@ -89,6 +100,10 @@ MESSAGE abv = 'JA'
 MESSAGE beleq = 'JBE'
 MESSAGE below = 'JB'
 MESSAGE abveq = 'JAE'
+MESSAGE sabv = 'JG'
+MESSAGE sbeleq = 'JLE'
+MESSAGE sbelow = 'JL'
+MESSAGE sabveq = 'JGE'
 
 BYTE indo
 BYTE movslen
@@ -102,6 +117,10 @@ LIST modules = MODULE_DOS,3,'DOS',0,MODULE_WINDOWS,7,'WINDOWS',0,0
 
 MESSAGE firstlocid = 'L_000'
 MESSAGE endlocid = 'L_999'
+MESSAGE preendlocid = 'L_998'
+MESSAGE adjustsp1 = '+1)/2'
+MESSAGE adjustsp2 = '*2'
+
 LIST newlocid (7)
 LIST lastlocid (7)
 LIST locval (30)
@@ -620,17 +639,25 @@ SAVE BX,SI,DI
 ; write new
 IF (ltype = 0)
    ; end of locals
-   writeobject2(&endlocid,&equal_t,0)
+   writeobject2(&preendlocid,&equal_t,0)
+   writechar(' ',0)
+   writechar('(',0)
 ELSE
    writeobject2(&newlocid,&equal_t,0)
+   writechar(' ',0)
 ENDIF
-writechar(' ',0)
 writeobject1(&lastlocid,0)
 writechar('+',0)
-writeobject1(&locval,1)
+BX = &locval
 IF (ltype = 0)
+   writeobject1(BX,0)
+   writeobject1(&adjustsp1,1)
+   writeobject2(&endlocid,&equal_t,0)
+   writechar(' ',0)
+   writeobject2(&preendlocid,&adjustsp2,1)
    RETURN
 ENDIF
+writeobject1(BX,1)
 ;
 ; update
 SI = &newlocid
@@ -921,10 +948,10 @@ DO
          DI++
          DI.0 = GLOBAL_LIST
          DI += 2
-         dstrcpy(BX,DI,' ')
+         d3strcpy(BX,DI,' ','(','=')
          DI--
          DI.0 = AL
-         BX += AX + 1
+         BX += AX
          POP DI
          AL += 4
          DI.0 = AL
@@ -943,6 +970,8 @@ DO
             writeobject2(&public_t,DI,1)
          ENDIF
          writeobject2(DI,&db_t,0)
+         removewhitespace(BX)
+         BX = AX
          IF (BX.0 = '(')
             ; which is test1 DB 10 DUP (0)
             BX++
@@ -1012,10 +1041,10 @@ DO
          DI++
          DI.0 = LOCAL_LIST
          DI += 2
-         dstrcpy(BX,DI,' ')
+         d2strcpy(BX,DI,' ','(')
          DI--
          DI.0 = AL
-         BX += AX + 1
+         BX += AX
          DI += AX + 2
          CX = AX
          removewhitespace(BX)
@@ -3169,6 +3198,7 @@ movements (movD)
 WORD
 {
 PUSH BX
+PUSH CX
 BX = movD
 removewhitespace(BX)
 BX = AX
@@ -3176,6 +3206,7 @@ movslen = 0
 movsdirD = 0
 movsrepD = 0
 movscond = 0
+CL = 0
 DO
    AL = BX.0
    IF (AL = 0 || AL = COMMA)
@@ -3183,28 +3214,32 @@ DO
       EXIT
    ENDIF
    BX++
-   IF (AL = 'W' || AL = 'B' || AL = 'D')
+   IF (CL = 0 && (AL = 'W' || AL = 'B' || AL = 'D'))
       movslen = AL
+      INC CL
       CONTINUE
    ENDIF
-   IF (AL = 'I' || AL = 'D')
+   IF (CL <> 0 && (AL = 'I' || AL = 'D'))
       IF (AL = 'I')
          AX = &cld_t
       ELSE
          AX = &std_t
       ENDIF
       movsdirD = AX
+      INC CL
       CONTINUE
    ENDIF
-   IF (AL = 'R')
+   IF (CL <> 0 && AL = 'R')
       AX = &rep_t
       movsrepD = AX
+      INC CL
       CONTINUE
    ENDIF
    error_code = INVALIDSTRINGOPERATION_ER
    CLC
 END
 AX = BX
+POP CX
 POP BX
 }
 ;-----------------------------
@@ -3506,4 +3541,4 @@ POP CX
 POP BX
 }
 ;------------------------
-TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port Ä    
+TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port      

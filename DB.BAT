@@ -1,1 +1,2 @@
-symdeb /i/k/s mil.sym mil.exe -s -p -t %1
+symdeb /i/k/s mil.sym mil.exe -s -p %1
+
