@@ -1,0 +1,542 @@
+; MFILE (converted succesfully)
+INCLUDE mconst.mil
+
+EXTERNAL FAR displayline (WORD,BYTE)
+EXTERNAL FAR aloc (WORD)
+EXTERNAL FAR dealocall (WORD)
+;------------------------
+DECLARE (DATA)
+INCLUDE mdatainc.mil
+WORD axtempD
+WORD retaddrD
+LIST asciinull1 (128)
+BYTE tempmethod
+LIST sourcefilecb (FILE_DESCRIPTOR)
+LIST objectfilecb (FILE_DESCRIPTOR)
+LIST includefilecb (FILE_DESCRIPTOR)
+FILEBUFFERLEN EQU 512
+LIST filebuffer (FILEBUFFERLEN)
+MESSAGE cannotopensfile = 'Cannot open source file'
+;------------------------
+DECLARE (STACK)
+;------------------------
+DECLARE (CODE)
+;------------------------
+loadupsourcefile ()
+FAR
+{
+PUSH BX
+PUSH DI
+DO
+   BX = &sourcefilecb
+   BX.FDbufferD.D = &filebuffer
+   BX.FDbufferlenD.D = FILEBUFFERLEN
+   BX.FDbufferposD.D = 0
+   open(BX,&sourcefileS,1)
+   IF (NC)
+      displayline(&cannotopensfile,1)
+      CLC
+      EXIT
+   ENDIF
+   BX = &sourceblkst
+   REPEAT
+      aloc(BX)
+      EXIT (NC)
+      BX = BX.bnextD.D
+      loadupblock(BX,&sourcefilecb)
+      EXIT (NC)
+   ENDREP {}
+   IF (bavailD < 2)
+      CLC
+   ELSE
+      STC
+   ENDIF
+END
+PUSHF
+close(&sourcefilecb)
+POPF
+POP DI
+POP BX   
+}
+;------------------------
+loadupincludefile ()
+FAR
+{
+PUSH BX
+PUSH DI
+DO
+   BX = &includefilecb
+   BX.FDbufferD.D = &filebuffer
+   BX.FDbufferlenD.D = FILEBUFFERLEN
+   BX.FDbufferposD.D = 0
+   open(BX,&includefileS,1)
+   IF (NC)
+      displayline(&cannotopenfile,1)
+      CLC
+      EXIT
+   ENDIF
+   BX = &includeblkst
+   REPEAT
+      aloc(BX)
+      EXIT (NC)
+      BX = BX.bnextD.D
+      loadupblock(BX,&includefilecb)
+      EXIT (NC)
+   ENDREP {}
+   IF (bavailD < 2)
+      CLC
+   ELSE
+      STC
+   ENDIF
+END
+PUSHF
+close(&includefilecb)
+POPF
+POP DI
+POP BX   
+}
+;------------------------
+loadupblock (loadblockD,filecbD)
+WORD
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH ES
+BX = loadblockD
+ES = BX.btextD.D
+CX = BX.blenD.D
+DI = 0
+REPEAT
+   readbyte(filecbD)
+   EXIT (NC)
+   IF (AL = 1AH)
+      ES.DI.0 = 0
+      CLC
+      EXIT
+   ENDIF
+   ES.DI.0 = AL
+   DI++
+   CX++
+   IF (CX = TBLOCKLEN)
+      STC
+      EXIT
+   ENDIF
+ENDREP {}
+PUSHF
+BX.blenD.D = CX
+POPF
+POP ES
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+saveobjectfile ()
+FAR
+{
+PUSH BX
+PUSH DI
+DO
+   BX = &objectfilecb
+   BX.FDbufferD.D = &filebuffer
+   BX.FDbufferlenD.D = FILEBUFFERLEN
+   BX.FDbufferposD.D = 0
+   open(BX,&objectfileS,0)
+   IF (NC)
+      displayline(&cannotopenfile,1)
+      CLC
+      EXIT
+   ENDIF
+   BX = &objectblkst
+   REPEAT
+      BX = BX.bnextD.D
+      EXIT (BX = 0FFFFH)
+      saveblock(BX)
+      EXIT (NC)
+   ENDREP {}
+END
+PUSHF
+close(&objectfilecb)
+dealocall(&objectblkst)
+POPF
+POP DI
+POP BX   
+}
+;------------------------
+saveblock (saveblockD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH ES
+BX = saveblockD
+ES = BX.btextD.D
+DI = 0
+REPEAT
+   AL = ES.DI.0
+   DI++
+   writebyte(&objectfilecb,AL)
+   EXIT (NC)
+   IF (DI = BX.blenD.D)
+      STC
+      EXIT
+   ENDIF
+ENDREP {}
+POP ES
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+open (FDaddD,fnameD,type)
+WORD
+WORD
+BYTE
+{
+pushall()
+DI = FDaddD
+DI.FDbufferlenD.D -= 1
+DI.FDbufferposD.D = 0
+DI.FDlastreadD.D = 0FFFFH
+DI.FDfileptr.0.D = 0
+DI.FDfileptr.2.D = 0
+DI.FDhandleD.D = 0
+PUSH DI
+; transfer filename to another address, asciinull1
+ES = DS
+SI = fnameD
+CL = SI.slen
+SI = SI.saddrD.D
+DI = &asciinull1
+CH = 0
+MOVS BIR
+DI.0 = 0
+POP DI
+AL = type
+IF (AL = 0)
+   DI.FDmode = 0
+ELSE
+   IF (AL = 1)
+      DI.FDmode = 1
+   ELSE
+      IF (AL = 10)
+         DI.FDmode = 0FFH
+      ELSE
+         CLC
+      ENDIF
+   ENDIF
+ENDIF
+AL = type
+IF (AL = 0)
+   fcreate(&asciinull1)
+    IF (C)
+        DI.FDhandleD.D = AX
+   ENDIF
+ELSE
+    IF (AL = 1)
+        fopen(&asciinull1,0)
+        IF (C)
+            DI.FDhandleD.D = AX
+        ENDIF
+    ELSE
+    IF (AL = 10)
+              fopen(&asciinull1,2)
+              IF (C)
+                    DI.FDhandleD.D = AX
+              ENDIF
+        ELSE
+            CLC
+        ENDIF
+    ENDIF
+ENDIF
+popall()
+}
+;-----------------------------
+fcreate (pthD)
+WORD
+{
+SI = pthD
+DX = SI
+CX = 0
+AH = 60
+INT 33
+CMC
+IF (NC)
+   CLC
+ELSE
+   STC
+ENDIF
+}
+;-----------------------------
+fopen (phD,access_code)
+WORD
+BYTE
+{
+DX = phD
+AL = access_code
+AH = 61
+INT 33
+CMC
+IF (NC)
+   CLC
+ELSE
+   STC
+ENDIF
+}
+;-----------------------------
+close (FDaddD)
+WORD
+{
+PUSH DI  ; Save registers
+PUSH BX
+PUSH CX
+PUSH DX
+DI = FDaddD
+IF (DI.FDmode = 0 || DI.FDmode = 100)
+   fwrite(DI.FDhandleD.D,DI.FDbufferposD.D,DI.FDbufferD.D)
+   DI.FDbufferposD.D = 0
+ENDIF
+fclose(DI.FDhandleD.D)
+DI.FDbufferlenD.D += 1
+DI.FDlastreadD.D = 0FFFFH
+POP DX ; Restore registers
+POP CX
+POP BX
+POP DI
+}
+;-----------------------------
+fclose (hanD)
+WORD
+{
+BX = hanD
+AH = 62
+INT 33
+CMC
+IF (NC)
+ CLC
+ENDIF
+}
+;-----------------------------
+readbyte (FDaddrD)
+WORD
+{
+PUSH DX  ; Save registers
+PUSH CX
+PUSH BX
+PUSH DI
+PUSH SI
+DI = FDaddrD
+IF (DI.FDmode = 0FFH)
+   DI.FDmode = 101
+ENDIF
+IF (DI.FDmode = 0 || DI.FDmode = 100)
+   CLC
+   POP SI
+   POP DI
+   POP BX
+   POP CX
+   POP DX
+   RETURN
+ENDIF
+IF (DI.FDbufferlenD.D = DI.FDbufferposD.D || DI.FDbufferposD.D = 0)
+   fread(DI.FDhandleD.D,DI.FDbufferlenD.D,DI.FDbufferD.D)
+   IF (AX < CX)
+      DI.FDlastreadD.D = AX
+   ENDIF
+   DI.FDbufferposD.D = 0
+   DI.FDfileptr.0.D += AX
+   IF (C)
+      DI.FDfileptr.2.D += 1
+      CMC
+   ENDIF
+ENDIF
+SI = DI.FDbufferposD.D
+IF (DI.FDlastreadD.D <> 0FFFFH && SI >= DI.FDlastreadD.D)
+   AX = 0
+   CLC
+ELSE
+   SI = DI.FDbufferD.D + DI.FDbufferposD.D
+   AH = 0
+   AL = SI.0
+   DI.FDbufferposD.D += 1
+   STC
+ENDIF
+POP SI  ; Restore registers
+POP DI
+POP BX
+POP CX
+POP DX
+}
+;-----------------------------
+fread (hndleD,lengthD,startD)
+WORD
+WORD
+WORD
+{
+BX = hndleD
+AH = 3FH
+CX = lengthD
+DX = startD
+INT 33
+CMC
+}
+;-----------------------------
+writebyte (FDaddrD,outbyte)
+WORD
+BYTE
+{
+PUSH DX  ;  Save registers
+PUSH CX
+PUSH BX
+PUSH DI
+PUSH SI
+DI = FDaddrD
+IF (DI.FDmode = 0FFH)
+   DI.FDmode = 100
+ENDIF
+IF (DI.FDmode = 1 || DI.FDmode = 101)
+   POP SI
+   POP DI
+   POP BX
+   POP CX
+   POP DX
+   CLC
+   RETURN
+ENDIF
+IF (DI.FDbufferlenD.D = DI.FDbufferposD.D)
+   fwrite(DI.FDhandleD.D,DI.FDbufferlenD.D,DI.FDbufferD.D)
+   IF (AX < CX)
+      CLC
+   ENDIF
+   DI.FDbufferposD.D = 0
+   DI.FDfileptr.0.D += AX
+   IF (C)
+      DI.FDfileptr.2.D += 1
+      CMC
+   ENDIF
+ENDIF
+SI = DI.FDbufferD.D + DI.FDbufferposD.D
+AL = outbyte
+SI.0 = AL
+;IF {DI.FDbufferlenD.D = DI.FDbufferposD.D} ; Compute new buffer position
+;  LET {DI.FDbufferposD.D = 0}
+;ENDIF {}
+DI.FDbufferposD.D += 1
+STC
+POP SI  ;  Restore registers
+POP DI
+POP BX
+POP CX
+POP DX
+}
+;-----------------------------
+fwrite (hndleD,lengthD,startD)
+WORD
+WORD
+WORD
+{
+BX = hndleD
+AH = 40H
+CX = lengthD
+DX = startD
+INT 33
+CMC
+IF (NC)
+   CLC
+ELSE
+   STC
+ENDIF
+}
+;-----------------------------
+position (FDaddrD,lswD,mswD)
+WORD
+WORD
+WORD
+{
+PUSH BX  ;  Save registers
+PUSH CX
+PUSH DX
+PUSH DI
+DI = FDaddrD
+IF (DI.FDmode = 0 || DI.FDmode = 100)
+   fwrite(DI.FDhandleD.D,DI.FDbufferposD.D,DI.FDbufferD.D)
+ENDIF
+IF (lswD = 0FFFFH && mswD = 0FFFFH)
+   lswD = 0
+   mswD = 0
+   tempmethod = 2
+ELSE
+   tempmethod = 0
+ENDIF
+fposition(DI.FDhandleD.D,lswD,mswD,tempmethod)
+IF (C)
+   DI.FDfileptr.0.D = AX
+   DI.FDfileptr.2.D = DX
+ENDIF
+DI.FDbufferposD.D = 0
+DI.FDlastreadD.D = 0FFFFH
+IF (DI.FDmode = 100 || DI.FDmode = 101)
+   DI.FDmode = 0FFH
+ENDIF
+POP DI  ;  Restore registers
+POP DX
+POP CX
+POP BX
+}
+;-----------------------------
+fposition (hanD,lD,mD,meth)
+WORD
+WORD
+WORD
+BYTE
+{
+AH = 42H
+AL = meth
+BX = hanD
+CX = mD
+DX = lD
+INT 33
+CMC
+IF (NC)
+ CLC
+ENDIF
+}
+;-----------------------------
+pushall ()
+{
+axtempD = AX
+POP AX ;AX := return address
+retaddrD = AX
+AX = axtempD
+PUSH DS
+PUSH ES
+PUSH BP
+PUSH DI
+PUSH SI
+PUSH DX
+PUSH CX
+PUSH BX
+PUSH AX
+JMP retaddrD
+}
+;-----------------------------
+popall ()
+{
+POP AX
+retaddrD = AX
+POP AX
+POP BX
+POP CX
+POP DX
+POP SI
+POP DI
+POP BP
+POP ES
+POP DS
+JMP retaddrD
+}
+;-----------------------------
+TOPLVL D	Ž€›€€€€€¾8S   °°  L`ÿ                                                                                                                                                               Ð Ô1      €OKI Laserline 6 Port €    

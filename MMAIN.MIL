@@ -1,0 +1,3397 @@
+;MMAIN (successfully translated)
+
+INCLUDE mconst.mil
+
+EXTERNAL WORD objectblkstD
+EXTERNAL WORD errorcountD
+EXTERNAL BYTE moduletype
+EXTERNAL BYTE endlocid
+
+EXTERNAL FAR init ()
+EXTERNAL FAR loadupsourcefile ()
+EXTERNAL FAR aloc (WORD)
+EXTERNAL FAR error ()
+EXTERNAL FAR displayline (WORD,BYTE)
+EXTERNAL FAR displayNL ()
+EXTERNAL FAR saveobjectfile ()
+EXTERNAL FAR uppercase ()
+EXTERNAL FAR storeline (WORD,BYTE)
+EXTERNAL FAR storechar (BYTE)
+EXTERNAL FAR storeNL ()
+EXTERNAL FAR asctonum (WORD)
+EXTERNAL FAR numasc (WORD,WORD)
+EXTERNAL FAR strcpy (WORD,WORD)
+EXTERNAL FAR dstrcpy (WORD,WORD,BYTE)
+EXTERNAL FAR strcmp (WORD,WORD)
+EXTERNAL FAR strlen (WORD)
+;------------------------
+DECLARE (DATA)
+INCLUDE mdatainc.mil
+
+BYTE curlycount
+BYTE segmentword
+BYTE paranumber
+BYTE atleastonesegment
+
+BYTE dottedflag
+BYTE dottedword
+
+; for LES,LDS - ES:BX = ??
+BYTE dblreg
+
+; 0 = no assignment possible
+; 1 = assignment OK
+; 2 = PUSH/POP
+; 3 = done through AX
+; 4 = done through AL
+; if -ve, can only assign (no add/sub,etc)
+LIST assignments = 9
+            DB 1,0,0,0,1,1,1,0,0   ; REGB
+            DB 0,1,-1,1,0,1,1,0,0  ; REGW
+            DB 0,-1,-2,3,0,3,3,0,0 ; REGS
+            DB 0,1,3,3,0,1,1,0,0   ; WORD
+            DB 1,0,0,0,4,1,1,0,0   ; BYTE
+            DB 0,0,0,0,0,0,0,0,0   ; TEXT
+            DB 0,0,0,0,0,0,0,0,0   ; NUMBER
+            DB 0,1,0,1,0,0,0,0,0   ; LDS
+            DB 0,1,0,1,0,0,0,0,0   ; LES
+
+MESSAGE done = 'Translation completed'
+MESSAGE errorreport = ' - with severe error(s)'
+;------------------------
+DECLARE (STACK)
+;------------------------
+DECLARE (CODE)
+;------------------------
+main ()
+{
+DS = DATA
+pspD = ES
+init()
+IF (NC)
+   AX = 4C01H
+   INT 21H
+ENDIF
+loadupsourcefile()
+IF (NC)
+;   displayline(&insufmem,1)
+   AX = 4C01H
+   INT 21H
+ENDIF
+BX = &parasblkst
+AX = 0FFFFH
+BX.bnextD.D = AX
+BX.bpriorD.D = AX
+BX.binuse = AL
+BX.btextD.D = DATA
+BX.blenD.D = 0
+BX = &sourceblkst
+BX = BX.bnextD.D
+cblkst_blkD = BX
+cblkst_posD = 0
+BX = &objectblkst
+aloc(BX)
+BX = BX.bnextD.D
+BX.blenD.D = 0
+objectblkstD = BX
+BX = &globalblkst
+aloc(BX)
+BX = BX.bnextD.D
+global_blkD = BX
+global_posD = BX.blenD.D
+BX = &procblkst
+AX = 0FFFFH
+BX.bnextD.D = AX
+BX.bpriorD.D = AX
+BX.binuse = AL
+BX.btextD.D = DATA
+BX.blenD.D = 0
+aloc(BX)
+BX = BX.bnextD.D
+AX = 0
+proc_posD = AX
+proc_blkD = BX
+status = STATUS_PARSEPROC
+parseallprocs()
+IF (NC)
+   error()
+   AX = 4C01H
+   INT 21H
+ENDIF
+BX = &sourceblkst
+BX = BX.bnextD.D
+cblkst_blkD = BX
+cblkst_posD = 0
+status = STATUS_START
+REPEAT
+   IF (bavailD < 2)
+      CLC
+      EXITL
+   ENDIF
+   readsourceline()
+   ; AL = 0  OK
+   ; AL = 1  ignore line
+   ; AL = 2  copy line to object
+   IF (NC)
+      STC
+      EXITL
+   ENDIF
+   CONTINUE (AL = 1)
+   IF (AL = 2)
+      copy_source_to_object(1)
+      CONTINUE
+   ENDIF
+   BX = &sourceline
+   IF (status <> DECLARECODE)
+      parsesourceline(BX)
+      IF (NC)
+         parse_and_trans_proccall(BX)
+         IF (NC)
+            parseassign(BX,0)
+            IF (C)
+               BX = AX
+               translateassign(BX)
+            ELSE
+               ; throw it out into the object
+               IF (bavailD < 2)
+                  error()
+                  CLC
+                  EXIT
+               ENDIF
+               copy_source_to_object(0)
+            ENDIF
+         ENDIF
+         error()
+         CONTINUEL
+      ENDIF
+   ELSE
+      ; looking for procedure declaration
+      parseprocdef(BX)
+      IF (C)
+         ; found our definition - AX is the entry (procdef_string)
+         translateprocdef(BX)
+         IF (C)
+            status = STATUS_PARSEPROC
+            IF (screenoutput <> 1 && quiet <> 1)
+               displayline(&current_proc_name,1)
+            ENDIF
+         ENDIF
+         error()
+         CONTINUEL
+      ENDIF
+      ; else could be an instructive macro
+      parsesourceline(BX)
+      IF (NC)
+         ; throw into the object
+         error_code = UNKNOWN_ER
+         error()
+         copy_source_to_object(0)
+         CONTINUEL
+      ENDIF
+   ENDIF
+   ; have found the macro at entry AX, now CX positions after start of sourceline
+   BX = AX
+   translatesource(BX,&sourceline,CX)
+   error()
+ENDREPL
+IFL (C)
+   ; successful
+   IF (declared_segment <> 0)
+      IF (moduletype = MODULE_WINDOWS)
+         end_segment_win(declared_segment)
+      ELSE
+         end_segment(declared_segment)
+      ENDIF
+   ENDIF
+   IF (main_proc = 2)
+      writeobject2(&end_t,&start_t,1)
+   ELSE
+      IF (atleastonesegment = 1)
+         writeobject1(&end_t,1)
+      ENDIF
+   ENDIF
+   IF (nofileoutput <> 1)
+      saveobjectfile()
+   ENDIF
+   displayNL()
+   displayline(&done,0)
+   IF (errorcountD <> 0)
+      displayline(&errorreport,0)
+   ENDIF
+   displayNL()
+ENDIF
+IF (errorcountD <> 0)
+   AX = 4C01H
+ELSE
+   AX = 4C00H
+ENDIF
+INT 21H
+}
+;------------------------
+copy_source_to_object (ignorefirst)
+FAR
+BYTE
+{
+PUSH DI
+PUSH SI
+DI = &objectline
+DI++
+SI = &sourceline
+IF (ignorefirst = 1)
+   SI++
+ENDIF
+removewhitespace(SI)
+SI = AX
+strcpy(SI,DI)
+DI--
+DI.0 = AL
+writeobject1(DI,1)
+POP SI
+POP DI
+}
+;------------------------
+parseallprocs ()
+{
+PUSH BX
+curlycount = 0
+REPEAT
+   readsourceline()
+   ; AL = 0  OK
+   ; AL = 1  ignore line
+   ; AL = 2  copy line to object
+   IF (NC)
+      STC
+      EXITL
+   ENDIF
+   CONTINUE (AL = 1 || AL = 2)
+   DI = &sourceline
+   IF (status = STATUS_DECLAREPROC)
+      ; 
+      ; scan for last '}'
+      removewhitespace(DI)
+      DI = AX
+      IF (DI.0 = '}')
+         status = STATUS_PARSEPROC
+      ENDIF
+      CONTINUE
+   ENDIF
+   status = STATUS_PARSEPROC
+   ; search for next procedure, by a letter and at least on small letter
+   CONTINUE ((DI.0 < 'A' || DI.0 > 'Z') && (DI.0 < 'a' || DI.0 > 'z'))
+   PUSH DI
+   DL = 0
+   REPEAT
+      AL = DI.0
+      DI++
+      iswhite()
+      EXIT (C)
+      EXIT (AL = 0 || AL = '(' || AL = ')')
+      IF (AL >= 'a' && AL <= 'z')
+         DL = 1
+      ENDIF
+   ENDREP
+   POP DI
+   CONTINUEL (DL = 0)
+   ; this is the first function declaration
+   ; scan for '(' for valididity
+   PUSH DI
+   REPEAT
+     AL = DI.0
+     EXIT (AL = 0 || AL = '(')
+     DI++
+   ENDREP
+   IF (AL = 0)
+      POP DI
+      CONTINUEL
+   ENDIF
+   ; this is a procedure declaration
+   status = STATUS_DECLAREPROC
+   SI = &procdef_string
+   SI.0 = PROC_NEAR
+   SI++
+   ; point to first argument
+   DI++
+   removewhitespace(DI)
+   DI = AX
+   CX = 0
+   IF (DI.0  <> ')')
+      CX++
+      ; scan for comma or ')'
+      REPEAT
+         AL = DI.0
+         EXIT (AL = 0 || AL = ')')
+         IF (AL = ',')
+            CX++
+         ENDIF
+         DI++
+      ENDREP
+      IF (AL = 0)
+         POP DI
+         CONTINUEL
+      ENDIF
+   ENDIF
+   POP DI
+   SI.0 = CL
+   SI++
+   PUSH CX
+   PUSH SI
+   SI = &variable_string
+   PUSH SI
+   SI++
+   CL = 0
+   REPEAT
+      AL = DI.0
+      EXIT (AL = 0 || AL = SPACE || AL = '(')
+      SI.0 = AL
+      SI++
+      DI++
+      CL++
+   ENDREP
+   SI.0 = 0
+   POP SI
+   SI.0 = CL
+   POP SI
+   POP CX
+   DO
+      DI = &sourceline
+      ; get the types of the paramaters
+      readsourceline()
+      ; AL = 0  OK
+      ; AL = 1  ignore line
+      ; AL = 2  copy line to object
+      IF (NC)
+         CLC
+         EXITL
+      ENDIF
+      CONTINUE (AL = 1 || AL = 2)
+      PUSH AX
+      removewhitespace(DI)
+      DI = AX
+      IF (DI.0 = '{')
+         IF (CL <> 0)
+            error_code = INVALIDPROCDEF_ER
+            CLC
+         ELSE
+            STC
+         ENDIF
+         POP AX
+         EXITL
+      ENDIF
+      POP AX
+      CONTINUE (DI.0 = 'L' && DI.1 = 'O') ; local (ignore it)
+      IF (DI.0 = 'W' && DI.1 = 'O')
+         AL = PARAMETER_WORD
+      ENDIF
+      IF (DI.0 = 'B')
+         AL = PARAMETER_BYTE
+      ENDIF
+      IF (DI.0 = 'S')
+         AL = PARAMETER_STRING
+      ENDIF
+      IF (DI.0 = 'M')
+         AL = PARAMETER_MESSAGE
+      ENDIF
+      IF (DI.0 = 'L' && DI.1 = 'I')
+         AL = PARAMETER_LIST
+      ENDIF
+      IF (DI.0 = 'F')
+         PUSH SI
+         SI = &procdef_string
+         SI.0 = PROC_FAR
+         POP SI
+         CONTINUEL
+      ENDIF
+      IF (DI.0 = 'N')
+         PUSH SI
+         SI = &procdef_string
+         SI.0 = PROC_NEAR
+         POP SI
+         CONTINUEL
+      ENDIF
+      IF (DI.0 = 'W' && DI.1 = 'I')
+         ; WINDOWS declaration
+         PUSH SI
+         SI = &procdef_string
+         SI.0 = PROC_WINDOWS
+         POP SI
+         CONTINUEL
+      ENDIF
+      IF (AL = 0 || CL = 0)
+         error_code = INVALIDPROCDEF_ER
+         CLC
+         EXIT
+      ENDIF
+      SI.0 = AL
+      SI++
+;      LOOP
+      CX--
+      CONTINUEL (CX <> 0)
+      STC
+   END
+   EXIT (NC)
+   ; copy name into SI
+   DI = &variable_string
+   CL = DI.0
+   CH = 0
+   SI.0 = CL
+   SI++
+   DI++
+   DO
+      SI.0 = DI.0
+      SI++
+      DI++
+      LOOP {}
+   END
+   SI.0 = 0FFH
+   ; copy SI into procblkst
+   storeprocdef()
+   curlycount = 0
+ENDREPL
+POP BX
+}
+;-----------------------------
+storeprocdef ()
+FAR
+{
+; store the proc defn from 'procdef' into the procblkst
+PUSH BX
+PUSH SI
+PUSH DI
+SI = &procdef_string
+BX = proc_blkD
+ES = BX.btextD.D
+DI = proc_posD
+REPEAT
+   AL = SI.0
+   ES.DI.0 = AL
+   SI++
+   DI++
+   PUSH AX
+   IF (DI = TBLOCKLEN)
+      BX.blenD.D = DI
+      aloc(BX)
+      EXIT (NC)
+      BX = BX.bnextD.D
+      ES = BX.btextD.D
+      DI = 0
+   ENDIF
+   POP AX
+   EXIT (AL = 0FFH)
+ENDREP
+proc_blkD = BX
+proc_posD = DI
+BX.blenD.D = DI
+POP SI
+POP DI
+POP BX
+}
+;-----------------------------
+parseprocdef (ppdefD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = ppdefD
+removewhitespace(BX)
+BX = AX
+AL = BX.0
+uppercase ()
+IF (AL <> '_' && (AL < 'A' || AL > 'Z'))
+   CLC
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   RETURN
+ENDIF
+BX = &procblkst
+BX = BX.bnextD.D
+ES = BX.btextD.D
+SI = 0
+REPEAT
+   EXITL (BX = 0FFFFH)
+   DI = &procdef_string
+   PUSH DI
+   REPEAT
+      IF (SI >= BX.blenD.D)
+         BX = BX.bnextD.D
+         EXIT (BX = 0FFFFH)
+         ES = BX.btextD.D
+         SI = 0
+      ENDIF
+      AL = ES.SI.0
+      DI.0 = AL
+      DI++
+      SI++
+      EXIT (AL = 0FFH)
+   ENDREP
+   DI.-1 = 0
+   POP DI
+   EXIT (BX = 0FFFFH)
+   PUSH BX
+   BX = ppdefD
+   PUSH DI
+   ; over code
+   DI++
+   CL = DI.0
+   CH = 0
+   DI++
+   DI += CX
+   ; over length
+   DI++
+   REPEAT
+      EXIT (DI.0 <> BX.0)
+      EXIT (BX.0 = 0 || DI.0 = 0)
+      DI++
+      BX++
+   ENDREP
+   IF (DI.0 = 0)
+      AL = BX.0
+      uppercase()
+      IF ((AL >= 'A' && AL <= 'Z') || (AL >= '0' && AL <= '9') || AL = '_')
+         CLC
+      ELSE
+         STC
+      ENDIF
+   ELSE
+      CLC
+   ENDIF
+   POP DI
+   POP BX
+   EXIT (C)
+ENDREPL
+AX = DI
+IF (BX = 0FFFFH)
+   CLC
+ELSE
+   STC
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+parse_and_trans_proccall (pproccallD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+DI = pproccallD
+farflag = 0
+windowsflag = 0
+removewhitespace(DI)
+DI = AX
+SI = AX
+DO
+   REPEAT
+      AL = SI.0
+      EXIT (AL = 0 || AL = '(')
+      SI++
+   ENDREP
+   IF (AL = 0)
+      CLC ; no error message - will be dealt with in parseassign
+      EXITL
+   ENDIF
+   ; search for name in procblkst
+   parseprocdef(DI)
+   EXITL (NC)
+   ; SI -> '('
+   BX = &proccall_string
+   PUSH BX
+   BX++
+   CL = 0
+   REPEAT
+      AL = DI.0
+      EXIT (AL = SPACE || AL = '(')
+      BX.0 = AL
+      BX++
+      DI++
+      CL++
+   ENDREP
+   BX.0 = 0
+   POP BX
+   BX.0 = CL
+   BX = &procdef_string
+   IF (BX.0 = PROC_FAR)
+      farflag = 1
+   ENDIF
+   IF (BX.0 = PROC_WINDOWS)
+      farflag = 1
+      windowsflag = 1
+   ENDIF
+   BX++
+   CL = BX.0
+   CH = 0
+   BX++
+   IF (windowsflag = 0)
+      BX += CX - 1
+   ENDIF
+   SI++
+   ; count the parameters from SI
+   PUSH CX
+   PUSH SI
+   CL = 0
+   CH = 0
+   IF (SI.0 <> ')')
+      REPEAT
+         AL = SI.0
+         SI++
+         IF (AL = QUOTE)
+            XOR CH,1
+         ENDIF
+         EXIT (AL = 0)
+         EXIT (CH = 0 && AL = ')')
+         IF (AL = ',' && CH = 0)
+            CL++
+         ENDIF
+      ENDREP
+   ELSE
+      CL--
+   ENDIF
+   POP SI
+   IF (AL = 0)
+      POP CX
+      error_code = NOCLOSEBRACKET_ER
+      STC
+      EXITL
+   ENDIF
+   CL++
+   AL = CL
+   ; number paras in CL
+   POP CX
+   IF (AL <> CL)
+      error_code = INCORRECTNUMBERPARAS_ER
+      STC
+      EXITL
+   ENDIF
+   ; save the registers if keep is active
+   pushes_before(0)
+   REPEAT
+      PUSH SI
+      IF (CL = 0)
+         removewhitespace(SI)
+         SI = AX
+         STC
+         POP SI
+         EXITL
+      ELSE
+         PUSH CX
+         CL--
+         CH = 0
+         IF (CL <> 0 && windowsflag = 0)
+            DO
+               REPEAT
+                  AL = SI.0
+                  IF (AL = QUOTE)
+                     XOR CH,1
+                  ENDIF
+                  EXIT (CH = 0 && AL = ',')
+                  SI++
+               ENDREP
+               SI++
+               LOOP {}
+            END
+         ENDIF
+         POP CX
+      ENDIF
+      dblreg = 0
+      opcode = 0
+      effectflag = 0
+      DI = &procparam_string
+      parseoperand(SI,DI,1)
+      IF (NC)
+         POP SI
+         EXITL
+      ENDIF
+      AL = DI.0
+      DI++
+      DO
+         IF (AL = ASSIGN_NUMBER || AL = ASSIGN_TEXT || offsetflag = 1)
+            IF (windowsflag = 0)
+               BX--
+            ELSE
+               BX++
+            ENDIF
+            CL--
+            IF (CL = 0FFH)
+               error_code = INCORRECTNUMBERPARAS_ER
+               CLC
+               EXITL
+            ENDIF
+            IF (effectflag <> 0)
+               writeobject2(&effect_t,&ax_t,0)
+            ELSE
+               writeobject2(&mov_t,&ax_t,0)
+            ENDIF
+            writeobject1(&comma_t,0)
+            writeobject1(DI,1)
+            writeobject2(&push_t,&ax_t,1)
+            STC
+            EXITL
+         ELSEL
+            IF (AL = ASSIGN_REGB)
+               IF (BX.0 <> PARAMETER_BYTE)
+                  error_code = INVALIDASSIGN_ER
+                  CLC
+                  EXITL
+               ENDIF
+               IF (DI.2 = 'H')
+                  IF (windowsflag = 0)
+                     BX--
+                  ELSE
+                     BX++
+                  ENDIF
+                  CL--
+                  IF (CL = 0FFH)
+                     CLC
+                     error_code = INCORRECTNUMBERPARAS_ER
+                     EXITL
+                  ENDIF
+                  writeobject2(&mov_t,&al_t,0)
+                  writeobject1(&comma_t,0)
+                  writeobject1(DI,1)
+                  writeobject2(&push_t,&ax_t,1)
+                  STC
+                  EXIT
+               ENDIF
+               DI.2 = 'X'
+            ENDIF
+            IF (AL = ASSIGN_MEMBYTE)
+               IF (BX.0 <> PARAMETER_BYTE)
+                  error_code = INVALIDASSIGN_ER
+                  CLC
+                  EXIT
+               ENDIF
+               PUSH AX
+               PUSH DI
+               DI++
+               AX = &word_t
+               AX++
+               strcpy(AX,DI)
+               DI.4 = SPACE
+               POP DI
+               POP AX
+            ENDIF
+            IF (AL <> ASSIGN_REGB && AL <> ASSIGN_MEMBYTE)
+               IF (BX.0 <> PARAMETER_WORD)
+                  error_code = INVALIDASSIGN_ER
+                  CLC
+                  EXIT
+               ENDIF
+            ENDIF
+            IF (windowsflag = 0)
+               BX--
+            ELSE
+               BX++
+            ENDIF
+            CL--
+            IF (CL = 0FFH)
+               error_code = INCORRECTNUMBERPARAS_ER
+               CLC
+               EXIT
+            ENDIF
+            writeobject2(&push_t,DI,1)
+            STC
+            EXIT
+         ENDIF
+      END
+      POP SI
+      EXIT (NC)
+      IF (windowsflag = 1)
+         PUSH CX
+         CH = 0
+         REPEAT
+            AL = SI.0
+            SI++
+            IF (AL = QUOTE)
+               XOR CH,1
+            ENDIF
+            EXIT (CH = 0 && (AL = ',' || AL = ')' || AL = 0))
+         ENDREP
+         POP CX
+      ENDIF
+      removewhitespace(SI)
+      SI = AX
+   ENDREPL
+   IF (NC)
+      ; error in the call definition
+      STC
+      EXIT
+   ENDIF
+   BX = &proccall_string
+   IF (farflag = 0)
+      writeobject2(&call_t,BX,1)
+   ELSE
+      writeobject3(&call_t,&farptr_t,BX,1)
+   ENDIF
+   ; if keep active then restore the registers
+   pops_after(0)
+   STC
+END
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+parsesourceline (slineD)
+FAR
+WORD
+{
+PUSH BX
+BX = &macros
+CL = BX.0
+CH = 0
+BX++
+DO
+   PUSH BX
+   PUSH CX
+   SI = BX.0.D
+   BX += 2
+   CL = SI.0
+   SI++
+   strcmp(SI,slineD)
+   ; found the macro
+   EXIT (C)
+   POP CX
+   POP BX
+   BX += MACROENTRY
+   LOOP {}
+   CLC
+END
+IF (C)
+   ; have found the macro entry at BX
+   POP CX
+   POP BX
+   CX = AX
+   AX = BX
+   STC
+ELSE
+   CLC
+ENDIF
+POP BX
+}
+;------------------------
+parseassign (passignD,passignext)
+FAR
+WORD
+BYTE
+{
+PUSH BX
+PUSH CX
+PUSH DX
+PUSH DI
+PUSH SI
+dblreg = 0
+opcode = 0
+DO
+   BX = passignD
+   IF (passignext = 0)
+      parseoperand(BX,&assigna1,0)
+      EXITL (NC)
+      BX = AX
+   ENDIF
+   parseoperator(BX,&assignop,passignext)
+   EXITL (NC)
+   BX = AX
+   effectflag = 0
+   parseoperand(BX,&assigna2,1)
+   IF (NC)
+      IF (opcode = ASSIGN_INC || opcode = ASSIGN_DEC)
+         assigncode = 1
+         STC
+      ELSE
+         CLC
+      ENDIF
+      EXITL
+   ENDIF
+   BX = AX
+   PUSH BX
+   BX = &assignments
+   assigncode = 1
+   DI = &assigna1
+   AL = DI.0
+   AL--
+   AH = 0
+   CL = BX.0
+   BX++
+   CH = 0
+   MUL CX
+   BX += AX
+   SI = &assigna2
+   AL = SI.0
+   AL--
+   AH = 0
+   BX += AX
+   AL = BX.0
+   DO
+      IF (AL = 0)
+         error_code = CANNOTASSIGN_ER
+         CLC
+         EXIT
+      ENDIF
+      TEST AL,80H ; is it -ve ?
+      IF (NZ)
+         IF (opcode <> ASSIGN_EQUAL)
+            error_code = INVALIDASSIGN_ER
+            CLC
+            EXIT
+         ENDIF
+         NEG AL
+      ENDIF
+      assigncode = AL
+      STC
+   END
+   POP BX
+   AX = BX
+END
+POP SI
+POP DI
+POP DX
+POP CX
+POP BX
+}
+;-----------------------------
+parseoperand (poperandsrcD,poperanddstD,secondoperand)
+WORD
+WORD
+BYTE
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = poperandsrcD
+DI = poperanddstD
+offsetflag = 0
+dottedflag = 0
+dottedword = 0
+DO
+   removewhitespace(BX)
+   BX = AX
+   parseregister(BX)
+   IF (C)
+      SI = AX
+      transregister(SI,BX,DI)
+      BX = AX
+      EXITL
+   ENDIF
+   parsedoubleregs(BX)
+   IF (C)
+      SI = AX
+      transdoubleregs(SI,BX,DI,secondoperand)
+      BX = AX
+      EXITL
+   ENDIF
+   parsenumber(BX)
+   IF (C)
+      SI = AX
+      DI.0 = ASSIGN_NUMBER
+      DI++
+      PUSH DI
+      DI++
+      strcpy(SI,DI)
+      PUSH AX
+      DI += AX
+      BX += AX
+      CL = 0
+      IF (default_number = DEFAULTHEX)
+         DI.0 = 'H'
+         DI.1 = 0
+         CL++
+      ENDIF
+      IF (default_number = DEFAULTBIN)
+         DI.0 = 'B'
+         DI.1 = 0
+         CL++
+      ENDIF
+      POP AX
+      AL += CL
+      POP DI
+      DI.0 = AL
+      STC
+      EXITL
+   ENDIF
+   parseparameter(BX)
+   ; format of SI is:
+   ;   0  Code
+   ;   1  Len id
+   ;   2  id+0
+   ;   x  Len equ
+   ;  x+1 Equ id
+   IF (C)
+      SI = AX
+      transparameter(SI,BX,DI)
+      BX = AX
+      EXITL
+   ENDIF
+   parsevariable(BX,1)
+   IF (C)
+      SI = AX
+      translocal(SI,BX,DI)
+      BX = AX
+      EXITL
+   ENDIF
+   parsevariable(BX,0)
+   IF (C)
+      SI = AX
+      transglobal(SI,BX,DI,secondoperand)
+      BX = AX
+      EXITL
+   ENDIF
+   AL = BX.0
+   IF (AL <> 0 && AL >= 'A' && AL <= 'Z' && secondoperand = 1)
+      DI.0 = ASSIGN_TEXT
+      DI += 2
+      PUSH BX
+      PUSH CX
+      PUSH DI
+      CL = 0
+      REPEAT
+         AL = BX.0
+         EXIT (AL = 0)
+         EXIT (AL = ' ' || AL = ')' || AL = ',')
+         DI.0 = AL
+         BX++
+         DI++
+         CL++
+      ENDREP
+      AL = CL
+      AH = 0
+      POP DI
+      POP CX
+      POP BX
+      DI--
+      DI.0 = AL
+      BX += AX
+      STC
+      EXITL
+   ENDIF
+   IF (AL = QUOTE)
+      ; form a character value for the quoted character
+      BX++
+      DI.0 = ASSIGN_NUMBER
+      DI++
+      DI.0 = 3
+      AL = BX.0
+      BX++
+      AH = 0
+      numasc(DI,AX)
+      REPEAT
+         EXIT (BX.0 = 0 || BX.0 = QUOTE)
+         BX++
+      ENDREP
+      IF (BX.0 = 0)
+         CLC
+      ELSE
+         BX++
+         STC
+      ENDIF
+      EXIT
+   ENDIF
+   IF (AL = '&' && secondoperand = 1)
+      ; either an incorrect variable name, or a procedure name
+      ; so parse for a proc name
+      BX++
+      parseprocdef (BX)
+      ; returns C and the entry in AX
+      IF (C)
+         ; it is a proc name
+         SI = AX
+         AL = SI.1
+         AH = 0
+         AX += 2
+         SI += AX
+         DI.0 = ASSIGN_MEMWORD
+         DI += 2
+         PUSH SI
+         SI = &offset_t
+         SI++
+         strcpy(SI,DI)
+         POP SI
+         DI--
+         DI.0 = AL
+         CL = SI.0
+         CH = 0
+         DI.0 += CL
+         SI++
+         DI++
+         DI += AX
+         BX += CX
+         DO
+            AL = SI.0
+            DI.0 = AL
+            SI++
+            DI++
+            LOOP
+         END
+         DI.0 = 0
+         STC
+      ELSE
+         error_code = UNDEFINED_ER
+         CLC
+      ENDIF
+      EXIT
+   ENDIF
+   DI.0 = 0
+   IF (opcode <> ASSIGN_INC && opcode <> ASSIGN_DEC)
+      IF (AL < 'A' || AL > 'Z')
+         error_code = UNDEFINED_ER
+      ENDIF
+   ENDIF
+   CLC
+END
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+transregister (vardefD,sourceD,destD)
+WORD
+WORD
+WORD
+{
+
+PUSH BX
+PUSH DI
+PUSH SI
+
+BX = sourceD
+DI = destD
+SI = vardefD
+
+DO
+   segmentword = 0
+   BX += 2
+   DI.0 = SI.0
+   IFL (BX.0 = '.')
+      IF (BX.-1 <> 'I' && (BX.-2 <> 'B' || BX.-1 <> 'X'))
+         IF (BX.-1 <> 'S')
+            error_code = NOTINDEXREG_ER
+            CLC
+            EXITL
+         ELSE
+            segmentword = BX.-2
+            BX += 3
+         ENDIF
+      ENDIF
+      regword = 0
+      CX = 0
+      PUSH BX
+      REPEAT
+         AL = BX.0
+         IF (AL <> '.')
+            EXIT (AL = 0)
+            uppercase()
+            EXIT ((AL < '0' || AL > '9') && (AL < 'A' || AL > 'Z') && AL <> '_' && AL <> '-')
+         ENDIF
+         BX++
+         CL++
+      ENDREP
+      IF (BX.-1 = 'D' && BX.-2 = '.')
+         regword = 1
+      ENDIF
+      POP BX
+      IF (regword = 1)
+         DI.0 = ASSIGN_MEMWORD
+         SI = &wordptr_t
+      ELSE
+         DI.0 = ASSIGN_MEMBYTE
+         SI = &byteptr_t
+      ENDIF
+      DI += 2
+      SI++
+      strcpy(SI,DI)
+      DI--
+      IF (segmentword = 0)
+         DI.0 = AL + CL + 4
+         AH = 0
+         DI += AX + 1
+      ELSE
+         DI.0 = AL + CL + 7
+         AH = 0
+         DI += AX + 1
+         DI.0 = segmentword
+         DI.1 = 'S'
+         DI.2 = ':'
+         DI += 3
+      ENDIF
+      DI.0 = '['
+      DI++
+      BX -= 2
+      CL += 2
+      DO
+         AL = BX.0
+         IF (AL = '.')
+            AL = '+'
+         ENDIF
+         DI.0 = AL
+         DI++
+         BX++
+         LOOP {}
+      END
+      IF (regword = 1)
+         DI.-1 = '0'
+      ENDIF
+      DI.0 = ']'
+      DI.1 = 0
+      STC
+      EXIT
+   ENDIF
+   ; bx.0 <> '.'
+   DI += 2
+   SI++
+   IF (dblreg <> 0)
+      DI.0 = '['
+      DI++
+   ENDIF
+   strcpy(SI,DI)
+   IF (dblreg <> 0)
+      PUSH AX
+      PUSH DI
+      DI += AX
+      DI.0 = ']'
+      DI.1 = 0
+      POP DI
+      DI--
+      POP AX
+      AL += 2
+   ENDIF
+   DI--
+   DI.0 = AL
+   STC
+END
+
+AX = BX
+
+POP SI
+POP DI
+POP BX
+}
+;------------------------
+transdoubleregs(vardefD,vsourceD,vdestD,secondoperand)
+WORD
+WORD
+WORD
+BYTE
+{
+
+PUSH BX
+PUSH DI
+PUSH SI
+
+BX = vsourceD
+SI = vardefD
+DI = vdestD
+
+DO
+   segmentword = 0
+   BX += 5
+   IF (secondoperand = 1 || SI.0 <> ASSIGN_REGW)
+      error_code = CANNOTASSIGN_ER
+      CLC
+      EXIT
+   ENDIF
+   IF (dblreg = 'E')
+      DI.0 = ASSIGN_LES
+   ELSE
+      DI.0 = ASSIGN_LDS
+   ENDIF
+   DI += 2
+   SI++
+   strcpy(SI,DI)
+   DI--
+   DI.0 = AL
+   STC
+END
+
+AX = BX
+
+POP SI
+POP DI
+POP BX
+
+}
+;------------------------
+transparameter (vardefD,vsourceD,vdestD)
+WORD
+WORD
+WORD
+{
+PUSH BX
+PUSH DI
+PUSH SI
+
+BX = vsourceD
+SI = vardefD
+DI = vdestD
+
+DO
+   IF (SI.0 = PARAMETER_WORD || offsetflag = 1)
+      AL = ASSIGN_MEMWORD
+   ELSE
+      AL = ASSIGN_MEMBYTE
+   ENDIF
+   DI.0 = AL
+   DI.1 = 0
+   DI += 2
+   PUSH SI
+   DO
+      IF (SI.0 = PARAMETER_BYTE)
+         SI = &byteptr_t
+         EXIT
+      ENDIF
+      SI = &wordptr_t
+   END
+   IF (offsetflag = 0)
+      SI++
+      strcpy(SI,DI)
+   ELSE
+      effectflag = 1
+      XOR AX,AX
+   ENDIF
+   DI.-1 = AL
+   POP SI
+   PUSH DI
+   DI += AX
+   DI.0 = '['
+   DI++
+   SI++
+   AX = &bp_t
+   AX++
+   strcpy(AX,DI)
+   DI.2 = '+'
+   AL = SI.0
+   AH = 0
+   SI += AX + 2
+   CL = SI.0
+   CH = 0
+   PUSH CX
+   ; equ id
+   SI++
+   DO
+      DI.3 = SI.0
+      SI++
+      DI++
+      LOOP {}
+   END
+   POP CX
+   POP DI
+   DI--
+   DI.0 += CL + 5
+   AL = DI.0
+   AH = 0
+   DI += AX
+   DI.0 = ']'
+   DI.1 = 0
+   IF (offsetflag = 1)
+      BX++
+   ENDIF
+   REPEAT
+      AL = BX.0
+      uppercase()
+      EXIT ((AL < 'A' || AL > 'Z') && (AL < '0' || AL > '9') && AL <> '_')
+      BX++
+   ENDREP
+   STC
+END
+
+AX = BX
+
+POP SI
+POP DI
+POP BX
+
+}
+;------------------------
+translocal (vardefD,vsourceD,vdestD)
+WORD
+WORD
+WORD
+{
+PUSH BX
+PUSH DI
+PUSH SI
+
+BX = vsourceD
+SI = vardefD
+DI = vdestD
+DO
+   ; get the type
+   DL = SI.0
+   ; jump over the name in the sourceline
+   AL = SI.1 ; length of name
+   AH = 0
+   BX += AX
+   SI += AX + 3
+   IF (offsetflag = 1)
+      BX++
+   ENDIF
+   IF (DL = LOCAL_WORD || offsetflag = 1 || dottedword = 1)
+      AL = ASSIGN_MEMWORD
+   ELSE
+      AL = ASSIGN_MEMBYTE
+   ENDIF
+   DI.0 = AL
+   DI.1 = 0
+   DI += 2
+   PUSH SI
+   IF (DL = LOCAL_WORD || offsetflag = 1 || dottedword = 1)
+      SI = &wordptr_t
+   ELSE
+      SI = &byteptr_t
+   ENDIF
+   IF (offsetflag = 0)
+      SI++
+      strcpy(SI,DI)
+   ELSE
+      effectflag = 1
+      XOR AX,AX
+   ENDIF
+   DI.-1 = AL
+   POP SI
+   PUSH DI
+   DI += AX
+   DI.0 = '['
+   DI++
+   AX = &bp_t
+   AX++
+   strcpy(AX,DI)
+   DI.2 = '+'
+   DI.3 = 'L'
+   DI.4 = '_'
+   DI.5 = SI.0
+   DI.6 = SI.1
+   DI.7 = SI.2
+   DI.8 = '-'
+   DI += 9
+   AX = &endlocid
+   AX++
+   strcpy(AX,DI)
+   DI += AX
+   IF (winproc_flag = 1)
+      DI.0 = '-'
+      DI.1 = '2'
+      DI += 2
+   ENDIF
+   ;
+   ; if it has been offsetted, ie. var.2.D, then add on value
+   ; BX points to the first char after the name
+   ; now add on the dotted value
+   REPEAT
+      AL = BX.0
+      EXIT (AL <> '.')
+      BX++
+      DI.0 = '+'
+      DI++
+      AH = 0
+      REPEAT
+         AL = BX.0
+         EXIT (AL = 0)
+         iswhite()
+         EXIT (C)
+         EXIT (AL = '.' || AL = ',' || AL = ')')
+         DI.0 = AL
+         DI++
+         BX++
+         AH = AL
+      ENDREP
+      IF (DI.-1 = 'D' && DI.-2 = '+')
+         DI.-1 = '0'
+      ENDIF
+   ENDREP
+   DI.0 = ']'
+   DI.1 = 0
+   POP DI
+   strlen(DI)
+   DI--
+   DI.0 = AL
+   STC
+END
+
+AX = BX
+
+POP SI
+POP DI
+POP BX
+}
+;------------------------
+transglobal (vardefD,vsourceD,vdestD,secondoperand)
+WORD
+WORD
+WORD
+BYTE
+{
+
+PUSH BX
+PUSH DI
+PUSH SI
+
+BX = vsourceD
+SI = vardefD
+DI = vdestD
+
+DO
+   ; special code to deal with arrays
+   IF (SI.0 = GLOBAL_ARRAY)
+      transglobalarray(SI,BX,DI,secondoperand)
+      BX = AX
+      EXITL
+   ENDIF
+   DO
+      IF (dblreg <> 0)
+         IF (secondoperand = 1 && (SI.0 = GLOBAL_WORD || SI.0 = GLOBAL_LIST))
+            ; check we do not have a BYTE
+            AL = ASSIGN_MEMWORD
+            STC
+            EXIT
+         ENDIF
+         ; error, ie. ES:BS = BYTE
+         error_code = INVALIDASSIGN_ER
+         CLC
+         EXIT
+      ENDIF
+      IF (SI.0 = GLOBAL_WORD || offsetflag = 1 || dottedword = 1)
+         AL = ASSIGN_MEMWORD
+         STC
+         EXIT
+      ENDIF
+      AL = ASSIGN_MEMBYTE
+      STC
+   END
+   EXITL (NC)
+   DI.0 = AL
+   DI.1 = 0
+   DI += 2
+   PUSH SI
+   DO
+      IF (offsetflag = 1)
+         SI = &offset_t
+         EXIT
+      ENDIF
+      IF (SI.0 = GLOBAL_BYTE || (dottedflag = 1 && dottedword = 0))
+         SI = &byteptr_t
+         EXIT
+      ENDIF
+      IF (dblreg <> 0)
+         SI = &opensquare_t
+         EXIT
+      ENDIF
+      SI = &wordptr_t
+   END
+   SI++
+   strcpy(SI,DI)
+   DI.-1 = AL
+   POP SI
+   PUSH DI
+   DI += AX
+   SI += 2 ; point to name
+   IF (dottedflag = 1 && dblreg = 0 && offsetflag = 0)
+      DI.0 = '['
+      DI++
+   ENDIF
+   strcpy(SI,DI)
+   BX += AX
+   IF (offsetflag = 1)
+      BX++
+   ENDIF
+   PUSH AX
+   IF (dottedflag = 1 || dblreg <> 0)
+      POP AX
+      DI += AX
+      REPEAT
+         AH = BX.0
+         BX++
+         EXIT ((AH < 'A' || AH > 'Z') && (AH < '0' || AH > '9') && AH <> '_' && AH <> '.')
+         IF (AH = '.')
+            AH = '+'
+         ENDIF
+         IF (AH = 'D' && DI.-1 = '+')
+            AH = '0'
+         ENDIF
+         DI.0 = AH
+         DI++
+         AL++
+      ENDREP
+      BX--
+      IF (offsetflag = 0)
+         DI.0 = ']'
+         DI++
+         AL += 2
+      ENDIF
+      AH = 0
+      PUSH AX
+   ENDIF
+   POP AX         
+   POP DI
+   DI--
+   PUSH AX
+   DI.0 += AL
+   AL = DI.0
+   AL++
+   DI += AX
+   DI.0 = 0
+   POP AX
+   STC
+END
+
+AX = BX
+
+POP SI
+POP DI
+POP BX
+
+}
+;------------------------
+transglobalarray (vardefD,vsourceD,vdestD,secondoperand)
+WORD
+WORD
+WORD
+BYTE
+{
+
+PUSH BX
+PUSH DI
+PUSH SI
+
+BX = vsourceD
+SI = vardefD
+DI = vdestD
+
+DO
+   ; special code to deal with arrays
+   IF (SI.0 <> GLOBAL_ARRAY)
+      AX = BX
+      CLC
+      EXITL
+   ENDIF
+   DO
+      IF (dblreg <> 0)
+         IF (secondoperand = 1)
+            ; check we do not have a BYTE
+            AL = ASSIGN_MEMWORD
+            STC
+            EXIT
+         ENDIF
+         ; error, ie. ES:BX = BYTE
+         error_code = INVALIDASSIGN_ER
+         CLC
+         EXIT
+      ENDIF
+      IF (offsetflag = 1 || dottedword = 1)
+         AL = ASSIGN_MEMWORD
+         STC
+         EXIT
+      ENDIF
+      AL = ASSIGN_MEMBYTE
+      STC
+   END
+   EXITL (NC)
+   ;
+   DI.0 = AL ; ASSIGN TYPE
+   DI.1 = 0 ; for length
+   DI += 2 ; point to start of text
+   PUSH SI
+   DO
+      IF (offsetflag = 1)
+         SI = &offset_t
+         EXIT
+      ENDIF
+      IF (dottedflag = 1 && dottedword <> 0)
+         SI = &wordptr_t
+         EXIT
+      ENDIF
+      IF (dblreg <> 0)
+         SI = &opensquare_t
+         EXIT
+      ENDIF
+      ; type of array ??
+      SI = &byteptr_t
+   END
+   SI++
+   strcpy(SI,DI)
+   DI.-1 = AL ; length
+   POP SI
+   ;
+   PUSH DI ; points to start of text 
+   DI += AX
+   SI += 2 ; point to name
+   DI.0 = '['
+   DI++
+   strcpy(SI,DI)
+   BX += AX
+   IF (offsetflag = 1)
+      BX++
+   ENDIF
+   DI += AX
+   SI += AX + 1
+   ; calculate the array index address
+   ; BX = name [0]
+   ;          ^
+   ; SI = GA,4,name,0,1,'10',0
+   ;                  ^
+   ; DI = BYTE PTR [name
+   ;                    ^
+   STC
+END
+
+AX = BX
+
+POP SI
+POP DI
+POP BX
+
+}
+;------------------------
+parsevariable (pvarD,pvarblkst)
+WORD
+BYTE
+{
+; The struture of any item in the symbol table is:
+;  00 Length of item (including length)
+;  01 Item Type
+;  02 Name Len
+;  03 ASCIIZ name
+;  NN Additional
+
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = pvarD
+AL = BX.0
+uppercase()
+IF (AL <> '&' && (AL < 'A' || AL > 'Z'))
+   CLC
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   RETURN
+ENDIF
+IF (pvarblkst = 0)
+   BX = &globalblkst
+ELSE
+   IF (pvarblkst = 1)
+      BX = &localblkst
+   ELSE
+      BX = &parasblkst
+   ENDIF
+ENDIF
+BX = BX.bnextD.D
+ES = BX.btextD.D
+SI = 0
+REPEAT
+   EXITL (BX = 0FFFFH)
+   DI = &variable_string
+   PUSH DI
+   IF (SI >= BX.blenD.D)
+      BX = BX.bnextD.D
+      IF (BX = 0FFFFH)
+         POP DI
+         EXITL
+      ENDIF
+      ES = BX.btextD.D
+      SI = 0
+   ENDIF
+   CL = ES.SI.0
+   CH = 0
+   CX--
+   SI++
+   DO
+      IF (SI >= BX.blenD.D)
+         BX = BX.bnextD.D
+         EXIT (BX = 0FFFFH)
+         ES = BX.btextD.D
+         SI = 0
+      ENDIF
+      AL = ES.SI.0
+      DI.0 = AL
+      DI++
+      SI++
+      LOOP
+   END
+   POP DI
+   EXITL (BX = 0FFFFH)
+   PUSH BX
+   BX = pvarD
+   IF (BX.0 = '&')
+      offsetflag = 1
+      BX++
+   ENDIF
+   PUSH DI
+   DI += 2 ; over type and namelen
+   REPEAT
+      EXIT (DI.0 <> BX.0)
+      EXIT (BX.0 = 0 || DI.0 = 0)
+      DI++
+      BX++
+   ENDREP
+   IF (DI.0 = 0)
+      AL = BX.0
+      uppercase()
+      IF ((AL >= 'A' && AL <= 'Z') || (AL >= '0' && AL <= '9') || AL = '_')
+         CLC
+      ELSE
+         IF (AL = '.')
+            dottedflag = 1
+            REPEAT
+               AL = BX.0
+               uppercase()
+               EXIT ((AL < 'A' || AL > 'Z') && (AL < '0' || AL > '9') && AL <> '.' && AL <> '_')
+               BX++
+            ENDREP
+            BX -= 2
+            IF (BX.0 = '.' && BX.1 = 'D')
+               dottedword = 1
+            ENDIF
+         ENDIF
+         STC
+      ENDIF
+   ELSE
+      CLC
+   ENDIF
+   POP DI
+   POP BX
+   EXIT (C)
+ENDREPL
+AX = DI
+IF (BX = 0FFFFH)
+   CLC
+ELSE
+   STC
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+parseparameter (pparaD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = pparaD
+AL = BX.0
+uppercase()
+IF (AL <> '&' && (AL < 'A' || AL > 'Z'))
+   CLC
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   RETURN
+ENDIF
+BX = &parasblkst
+BX = BX.bnextD.D
+ES = BX.btextD.D
+SI = 0
+REPEAT
+   EXITL (BX = 0FFFFH)
+   DI = &variable_string
+   PUSH DI
+   REPEAT
+      IF (SI >= BX.blenD.D)
+         BX = BX.bnextD.D
+         EXIT (BX = 0FFFFH)
+         ES = BX.btextD.D
+         SI = 0
+      ENDIF
+      AL = ES.SI.0
+      DI.0 = AL
+      DI++
+      SI++
+      EXIT (AL = 0FFH)
+   ENDREP
+   DI.0 = 0
+   POP DI
+   EXIT (BX = 0FFFFH)
+   PUSH BX
+   BX = pparaD
+   IF (BX.0 = '&')
+      offsetflag = 1
+      BX++
+   ENDIF
+   PUSH DI
+   DI += 2
+   REPEAT
+      EXIT (DI.0 <> BX.0)
+      EXIT (BX.0 = 0 || DI.0 = 0)
+      DI++
+      BX++
+   ENDREP
+   IF (DI.0 = 0)
+      AL = BX.0
+      uppercase()
+      IF ((AL >= 'A' && AL <= 'Z') || (AL >= '0' && AL <= '9') || AL = '_')
+         CLC
+      ELSE
+         STC
+      ENDIF
+   ELSE
+      CLC
+   ENDIF
+   POP DI
+   POP BX
+   EXIT (C)
+ENDREPL
+AX = DI
+IF (BX = 0FFFFH)
+   CLC
+ELSE
+   STC
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+parseregister (pregD)
+FAR
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+BX = pregD
+SI = &registers
+CL = SI.0
+CH = 0
+SI++
+DO
+   AL = BX.0
+   IF (AL = SI.1 && BX.1 = SI.2)
+      AL = BX.2
+      uppercase()
+      IF ((AL < 'A' || AL > 'Z') && (AL < '0' || AL > '9') && AL <> ':' && AL <> '_')
+         STC
+      ELSE
+         CLC
+      ENDIF
+      EXIT
+   ENDIF
+   SI += 4
+   LOOP {}
+   CLC
+END
+PUSHF
+AX = SI
+POPF
+POP SI
+POP CX
+POP BX
+}
+;-----------------------------
+parsedoubleregs (pregD)
+FAR
+WORD
+{
+PUSH BX
+PUSH SI
+BX = pregD
+DO
+   IF (BX.2 <> ':')
+      CLC
+      EXIT
+   ENDIF
+   AL = BX.0
+   AH = BX.1
+   IF (AH <> 'S' || (AL <> 'E' && AL <> 'D'))
+      CLC
+      EXIT
+   ENDIF
+   PUSH AX
+   BX += 3
+   parseregister(BX)
+   SI = AX
+   POP AX
+   EXIT (NC)
+   dblreg = AL
+   AX = SI
+END
+POP SI
+POP BX
+; returns second reg in AX and first in dblreg
+}
+;-----------------------------
+parsenumber (pnumD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+BX = pnumD
+SI = &number_string
+PUSH SI
+CL = 0
+IF (BX.0 >= '0' && BX.0 <= '9')
+   REPEAT
+      AL = BX.0
+      EXIT ((AL < 'A' || AL > 'F') && (AL < '0' || AL > '9'))
+      SI.0 = AL
+      SI++
+      BX++
+      CL++
+   ENDREP
+   SI.0 = 0
+   IF (AL = 'H' && CL <> 0)
+      BX++
+      SI.0 = 'H'
+      SI.1 = 0
+   ENDIF
+ENDIF
+POP SI
+IF (CL = 0)
+   CLC
+ELSE
+   STC
+ENDIF
+PUSHF
+AX = SI
+POPF
+POP SI
+POP CX
+POP BX
+}
+;-----------------------------
+parseoperator (popersrcD,poperdstD,poperext)
+WORD
+WORD
+BYTE
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = popersrcD
+DI = poperdstD
+IF (status = STATUS_IFDEF)
+   SI = &conditions
+ELSE
+   SI = &operations
+ENDIF
+removewhitespace(BX)
+BX = AX
+CL = SI.0
+CH = 0
+SI++
+DO
+   AL = BX.0
+   IF (AL = SI.1)
+      IF ((SI.2 = 0 && BX.1 <> '=' && BX.1 <> '>') || BX.1 = SI.2)
+         STC
+         EXIT
+      ENDIF
+   ENDIF
+   SI += 4
+   LOOP {}
+   CLC
+END
+DO
+   EXIT (NC)
+   AL = SI.0
+   IF (poperext = 1)
+      IF (AL <> ASSIGN_ADD && AL <> ASSIGN_SUB)
+         CLC
+         EXIT
+      ENDIF
+   ENDIF
+   opcode = AL
+   DI.0 = AL
+   DI += 2
+   SI++
+   strcpy(SI,DI)
+   DI--
+   DI.0 = AL
+   BX += AX
+   AX = BX
+   STC
+END
+IF (NC)
+   error_code = INVALIDOPERATOR_ER
+   CLC
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+translatesource (xlateentryD,xslineD,wordstartD)
+FAR
+WORD
+WORD
+WORD
+{
+PUSH BX
+BX = xlateentryD
+; call the routine for the macro
+AX = xslineD
+AX += wordstartD
+PUSH AX
+PUSH AX
+CALL WORD PTR [BX+2] ; returns NC if error, else C
+POP CX
+POP BX   
+}
+;-----------------------------
+translateassign (tassignD)
+WORD
+{
+PUSH BX
+PUSH DI
+PUSH SI
+BX = 0
+AL = opcode
+DO
+   IF (AL = ASSIGN_EQUAL)
+      DO
+         IF (effectflag <> 0)
+            BX = &effect_t
+            EXIT
+         ENDIF
+         IF (dblreg <> 0)
+            BX = &lseg_t
+            BX.2 = dblreg
+            EXIT
+         ENDIF
+         BX = &mov_t
+      END
+      EXIT
+   ENDIF
+   IF (AL = ASSIGN_ADDEQUAL || AL = ASSIGN_ADD)
+      BX = &add_t
+      EXIT
+   ENDIF
+   IF (AL = ASSIGN_SUBEQUAL || AL = ASSIGN_SUB)
+      BX = &sub_t
+      EXIT
+   ENDIF
+   IF (AL = ASSIGN_INC)
+      BX = &inc_t
+      EXIT
+   ENDIF
+   IF (AL = ASSIGN_DEC)
+      BX = &dec_t
+      EXIT
+   ENDIF
+END
+IF (BX = 0)
+   POP SI
+   POP DI
+   POP BX
+   CLC
+   RETURN
+ENDIF
+SI = &assigna1
+SI++
+DI = &assigna2
+DI++
+AL = assigncode
+DO
+   IF (AL = 1)
+      IF (DI.-1 = 0)
+         AL = 1
+      ELSE
+         AL = 0
+      ENDIF
+      PUSH AX
+      writeobject2(BX,SI,AL)
+      POP AX
+      IF (AL = 0)
+         writeobject1(&comma_t,0)
+         writeobject1(DI,1)
+      ENDIF
+      STC
+      EXITL
+   ENDIF
+   IF (AL = 2)
+      writeobject2(&push_t,DI,1)
+      writeobject2(&pop_t,SI,1)
+      STC
+      EXITL
+   ENDIF
+   IF (AL = 3 || AL = 5)
+      writeobject2(&mov_t,&ax_t,0)
+      writeobject1(&comma_t,0)
+      writeobject1(DI,1)
+      writeobject2(BX,SI,0)
+      writeobject1(&comma_t,0)
+      writeobject1(&ax_t,1)
+      STC
+      EXIT
+   ENDIF
+   IF (AL = 4)
+      writeobject2(&mov_t,&al_t,0)
+      writeobject1(&comma_t,0)
+      writeobject1(DI,1)
+      writeobject2(BX,SI,0)
+      writeobject1(&comma_t,0)
+      writeobject1(&al_t,1)
+      STC
+      EXIT
+   ENDIF
+   CLC
+END
+DO
+   EXIT (NC)
+   BX = tassignD
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = 0 || BX.0 = ';')
+      STC
+      EXITL
+   ENDIF
+   parseassign(BX,1)
+   IF (NC)
+      error_code = INVALIDASSIGN_ER
+      CLC
+      EXITL
+   ENDIF
+   BX = AX
+   translateassign(BX)
+END
+dblreg = 0
+
+POP SI
+POP DI
+POP BX
+}
+;-----------------------------
+translateprocdef (tprocdefD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+DI = &procdef_string
+farflag = 0
+winproc_flag = 0
+DO
+   IF (DI.0 = PROC_NEAR)
+      SI = &procnear_t
+      EXIT
+   ENDIF
+   IF (DI.0 = PROC_WINDOWS)
+      farflag = 1
+      winproc_flag = 1
+      SI = &procfar_t
+      EXIT
+   ENDIF
+   SI = &procfar_t
+   farflag = 1
+END
+DI++
+CL = DI.0
+number_paras = CL
+CH = 0
+DI++
+PUSH DI ; save at paras type
+DI += CX
+PUSH DI
+PUSH SI
+; copy name into current proc name
+PUSH CX
+BX = &current_proc_name
+PUSH BX
+CL = DI.0
+CH = 0
+BX.0 = CL
+BX++
+DI++
+DO
+   BX.0 = DI.0
+   DI++
+   BX++
+   LOOP {}
+   BX.0 = 0
+END
+POP BX
+strcmp(BX,&main_t)
+IF (C)
+   ; this is the 'main' procedure
+   main_proc = 1
+ENDIF
+POP CX
+POP SI
+POP DI
+; make public 
+writeobject2(&public_t,DI,1)
+; now at name, so write it
+writeobject2(DI,SI,1)
+IF (main_proc = 1)
+   PUSH BX
+   PUSH CX
+   BX = &start_t
+   BX++
+   DI = &variable_string
+   PUSH DI
+   DI++
+   strcpy(BX,DI)
+   DI--
+   AL++
+   DI.0 = AL
+   DI += AX
+   DI.0 = ':'
+   DI.1 = 0
+   POP DI
+   writeobject1(DI,1)
+   POP CX
+   POP BX
+ENDIF
+; move to first argument name
+DI = tprocdefD
+; scan for '('
+REPEAT
+   AL = DI.0
+   EXIT (AL = 0 || AL = '(')
+   DI++
+ENDREP
+DI++
+removewhitespace(DI)
+tprocdefD = AX
+POP DI
+IF (winproc_flag = 1)
+   ; must output the window stuff 'mov ax,ds;nop'
+   writeobject1(&winprocstart,1)
+ENDIF
+IFL (CL <> 0)
+   BX = &parasblkst
+   aloc(BX)
+   BX = BX.bnextD.D
+   paras_blkD = BX
+   paras_posD = 0
+   SI = &parameteroffset
+   ; if far proc then add another (to start at 0006)
+   PUSH SI
+   AL = SI.0
+   AH = 0
+   SI += AX
+   IF (farflag = 1)
+      SI.0 += 2
+   ENDIF
+   POP SI
+   IF (CL <> 1 && winproc_flag = 1)
+      PUSH CX
+      CL--
+      CH = 0
+      AL = SI.0
+      AH = 0
+      SI += AX
+      DO
+         IF (SI.0 = '8')
+            SI.0 = '0'
+            SI.-1 += 1
+         ELSE
+            SI.0 += 2
+         ENDIF
+         LOOP {}
+      END
+      POP CX
+   ENDIF
+   paranumber = 0
+   DO
+      PUSH CX
+      ; write parameters
+      BX = &parametername
+      SI = &parameteroffset
+      writeobject2(BX,&equ_t,0)
+      writeobject1(SI,1)
+      ; store the parameter names with their pseudonyms
+      storeparameters(tprocdefD,BX,SI)
+      PUSH DI
+      DI = tprocdefD
+      ; scan for comma
+      REPEAT
+         AL = DI.0
+         EXIT (AL = ',' || AL = 0 || AL = SPACE)
+         DI++
+      ENDREP
+      DI++
+      removewhitespace(DI)
+      POP DI
+      tprocdefD = AX
+      ; increment the name and offset
+      CL = BX.0
+      CH = 0
+      BX += CX
+      IF (BX.0 = '9')
+         BX.0 = '0'
+         IF (BX.-1 = '9')
+            BX.-1 = '0'
+            BX.-2 += 1
+         ELSE
+            BX.-1 += 1
+         ENDIF
+      ELSE
+         BX.0 += 1
+      ENDIF
+      CL = SI.0
+      CH = 0
+      SI += CX
+      IF (winproc_flag = 1)
+         IF (SI.0 = '0')
+            SI.0 = '8'
+            SI.-1 -= 1
+         ELSE
+            SI.0 -= 2
+         ENDIF
+      ELSE
+         IF (SI.0 = '8')
+            SI.0 = '0'
+            SI.-1 += 1
+         ELSE
+            SI.0 += 2
+         ENDIF
+      ENDIF
+      paranumber += 1
+      POP CX
+;      LOOP {}
+      CX--
+      CONTINUEL (CX <> 0)
+      IF (winproc_flag <> 0)
+         writeobject1(&incbp_t,1)
+      ENDIF
+      writeobject1(&pushbp_movbp_t,1)
+      ; reset the parameter offset
+      SI = &parameteroffset
+      CL = SI.0
+      CH = 0
+      SI += CX
+      SI.0 = '4'
+      SI.-1 = '0'
+   END
+ENDIF
+
+; calculate the ret amount
+SI = &ret_by
+CL = SI.0
+CH = 0
+SI += CX
+CL = number_paras
+AL = CL
+SHL AL,1
+IF (AL > 9)
+   AH = 0
+   CL = 10
+   DIV CL
+   CL = '0'
+   SI.0 = AH + CL
+   SI.-1 = AL + CL
+ELSE
+   CL = '0'
+   SI.-1 = CL
+   SI.0 = AL + CL
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+STC
+}
+;-----------------------------
+translate_structmem (tsmmemD,tsmtype)
+FAR
+WORD
+BYTE
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+DO
+   BX = tsmmemD
+   SI = &variable_string
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = 0)
+      CLC
+      EXITL
+   ENDIF
+   SI++
+   dstrcpy(BX,SI,' ')
+   BX += AX
+   SI--
+   SI.0 = AL
+   DI = &struct_lastname
+   writeobject2(SI,&equ_t,0)
+   writeobject1(DI,0)
+   writechar('+',0)
+   writeobject1(&struct_lastcount,1)
+   CL = SI.0
+   CH = 0
+   CL += 2
+   PUSH DS
+   POP ES
+   MOVS BIR
+   DI = &struct_lastcount
+   PUSH DI
+   CL = 4
+   DI.0 = CL
+   CH = 0
+   PUSH CX
+   PUSH DS
+   POP ES
+   AL = '0'
+   DI++
+   STOS BIR
+   POP CX
+   POP DI
+   DI += CX
+   DO
+      IF (tsmtype = 0)
+         DI.0 = '1'
+         STC
+         EXIT
+      ENDIF
+      IF (tsmtype = 1)
+         DI.0 = '2'
+         STC
+         EXIT
+      ENDIF
+      IF (tsmtype = 2)
+         DI -= CX
+         removewhitespace(BX)
+         BX = AX
+         IF (BX.0 = '(')
+            BX++
+         ENDIF
+         CX = 0
+         PUSH BX
+         REPEAT
+            EXIT (BX.0 = 0 || BX.0 = ')')
+            BX++
+            CL++
+         ENDREP
+         POP BX
+         DI.0 = CL
+         DI++
+         DO
+            DI.0 = BX.0
+            DI++
+            BX++
+            LOOP {}
+         END
+         IF (BX.0 <> ')')
+            BX--
+         ENDIF
+         STC
+         EXIT
+      ENDIF
+      CLC
+   END
+END
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+storeparameters (spnameD,sppseudoD,sppnoD)
+WORD
+WORD
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = &procdef_string
+BX++
+BX++
+AL = paranumber
+AH = 0
+BX += AX
+DO
+   DI = &variable_string
+   SI = spnameD
+   DI.0 = BX.0
+   DI++
+   PUSH DI ; point to len of real name
+   DI++
+   CL = 0
+   REPEAT
+      AL = SI.0
+      EXIT (AL = 0 || AL = ')' || AL = SPACE || AL = ',')
+      DI.0 = AL
+      DI++
+      SI++
+      CL++
+   ENDREP
+   DI.0 = 0
+   DI++
+   AX = DI
+   POP DI
+   DI.0 = CL
+   DI = AX
+   SI = sppseudoD
+   REPEAT
+      AL = SI.0
+      EXIT (AL = 0 || AL = ')' || AL = SPACE || AL = ',')
+      DI.0 = AL
+      DI++
+      SI++
+   ENDREP
+   DI.0 = 0FFH
+   DI++
+   AX = DI
+END
+   BX = paras_blkD
+SI = BX.blenD.D
+ES = BX.btextD.D
+DI = &variable_string
+CL = DI.1
+CH = 0
+PUSH DI
+DI++
+REPEAT
+   EXIT (DI.0 = 0)
+   DI++
+ENDREP
+DI++
+CL += DI.0 + 5
+POP DI
+DO
+   ES.SI.0 = DI.0
+   DI++
+   SI++
+   IF (SI = TBLOCKLEN)
+      BX.blenD.D = SI
+      aloc(BX)
+      EXIT (NC)
+      BX = BX.bnextD.D
+      ES = BX.btextD.D
+      SI = 0
+   ENDIF
+   LOOP {}
+   STC
+END
+IF (NC)
+   error_code = NOSYMBOLSPACE_ER
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   CLC
+   RETURN
+ENDIF
+BX.blenD.D = SI
+paras_blkD = BX
+paras_posD = SI
+STC
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+readsourceline ()
+FAR
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = cblkst_blkD
+SI = cblkst_posD
+ES = BX.btextD.D
+; scan for first non-white space
+DI = &whitespace
+CL = DI.0
+CH = 0
+DI++
+REPEAT
+   PUSH CX
+   PUSH DI
+   AL = ES.SI.0
+   DO
+      IF (AL = DI.0)
+         SI++
+         IF (SI = BX.blenD.D)
+            BX = BX.bnextD.D
+            EXIT (BX = 0FFFFH)
+            SI = 0
+            ES = BX.btextD.D
+         ENDIF
+         STC
+         EXIT
+      ENDIF
+      DI++
+      LOOP {}
+      CLC
+   END
+   POP DI
+   POP CX
+   EXIT (NC)
+   EXIT (BX = 0FFFFH)
+ENDREP
+IF (BX = 0FFFFH)
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   CLC
+   RETURN
+ENDIF
+DI = &inline
+PUSH DI
+REPEAT
+   AL = ES.SI.0
+   EXIT (AL = 13)
+   DI.0 = AL
+   SI++
+   IF (SI >= BX.blenD.D)
+      BX = BX.bnextD.D
+      EXIT (BX = 0FFFFH)
+      ES = BX.btextD.D
+      SI = 0
+   ENDIF
+   DI++
+ENDREP
+DI.0 = 0
+cblkst_posD = SI
+cblkst_blkD = BX
+; clear the sourceline
+DI = &sourceline
+PUSH DS
+POP ES
+AL = 0
+CX = 80
+STOS BIR
+POP DI
+; get first non-white character
+removewhitespace(DI)
+DI = AX
+PUSH DI
+SI = &sourceline
+AH = 0
+REPEAT
+   AL = DI.0
+   IF (AL = QUOTE)
+      XOR AH,1
+   ENDIF
+   IF (AL = ';' && AH = 0)
+      AL = 0
+   ENDIF
+   IF (AL = 9 && AH = 0)
+      AL = 32
+   ENDIF
+   SI.0 = AL
+   EXIT (AL = 0)
+   DI++
+   SI++
+ENDREP
+POP DI
+AL = 0
+IF (DI.0 = ';')
+   AL = 1
+ENDIF
+IF (DI.0 = '#')
+   AL = 2
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+STC
+}
+;-----------------------------
+iswhite ()
+FAR
+{
+PUSH AX
+PUSH BX
+PUSH CX
+BX = &whitespace
+CL = BX.0
+CH = 0
+BX++
+DO
+   AH = BX.0
+   BX++
+   IF (AL = AH)
+      STC
+      EXIT
+   ENDIF
+   LOOP
+   CLC
+END
+POP CX
+POP BX
+POP AX
+}
+;------------------------
+removewhitespace (whstartD)
+FAR
+WORD
+{
+; scans for white space starting from whstartD and returns AX with address 
+; of first non-white character
+PUSH BX
+PUSH CX
+PUSH SI
+PUSH ES
+BX = whstartD
+SI = &whitespace
+ES = DATA
+CL = ES.SI.0
+CH = 0
+SI++
+REPEAT
+   PUSH CX
+   PUSH SI
+   AL = BX.0
+   DO
+      IF (AL = ES.SI.0)
+         BX++
+         STC
+         EXIT
+      ENDIF
+      SI++
+      LOOP {}
+      CLC
+   END
+   POP SI
+   POP CX
+   EXIT (NC)
+ENDREP
+AX = BX
+POP ES
+POP SI
+POP CX 
+POP BX
+}
+;-----------------------------
+end_segment (cseg)
+FAR
+BYTE
+{
+; write the code for the end of segment, eg. CODE ENDS
+PUSH BX
+AL = cseg
+DO
+   IF (AL = DECLARESTACK)
+      BX = &stack_t
+      STC
+      EXIT
+   ENDIF
+   IF (AL = DECLAREDATA)
+      BX = &data_t
+      STC
+      EXIT
+   ENDIF
+   IF (AL = DECLARECODE)
+      IF (userseg = 0)
+         BX = &code_t
+      ELSE
+         BX = &usersegname
+         userseg = 0
+      ENDIF
+      STC
+      EXIT
+   ENDIF
+   CLC
+END
+IF (C)
+   writeobject2(BX,&ends_t,1)
+   declared_segment = 0
+ENDIF
+POP BX
+}
+;------------------------
+end_segment_win (cseg)
+FAR
+BYTE
+{
+; write the code for the end of segment, eg. _TEXT ENDS
+PUSH BX
+AL = cseg
+DO
+   IF (AL = DECLARESTACK)
+      BX = &stack_t
+      STC
+      EXIT
+   ENDIF
+   IF (AL = DECLAREDATA)
+      BX = &udata_t
+      STC
+      EXIT
+   ENDIF
+   IF (AL = DECLARECODE)
+      IF (userseg = 0)
+         BX = &ucode_t
+      ELSE
+         BX = &usersegname
+         userseg = 0
+      ENDIF
+      STC
+      EXIT
+   ENDIF
+   CLC
+END
+IF (C)
+   writeobject2(BX,&ends_t,1)
+   declared_segment = 0
+ENDIF
+POP BX
+}
+;------------------------
+create_segment (csseg,cssegposD)
+FAR
+BYTE
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+AL = csseg
+DO
+   IF (AL = DECLARESTACK)
+      writeobject1(&stacksegment,1)
+      BX = cssegposD
+      removewhitespace(BX)
+      BX = AX
+      IF (BX.0 >= '0' && BX.0 <= '9')
+         writeobject1(&db_t,0)
+         writenumber(cssegposD,0)
+         BX = AX
+         writeobject1(&space_t,0)
+         writeobject1(&dupzero_t,1)
+      ENDIF
+      AX = BX
+      atleastonesegment = 1
+      STC
+      EXITL
+   ENDIF
+   IF (AL = DECLARECODE && userseg = 1)
+      BX = cssegposD
+      DI = &usersegname
+      writeobject2(DI,&usersegment1,0)
+      writeobject1(DI,0)
+      ; test if we have had a data segment
+      TEST whichsegs,WHICHSEG_DATA
+      IF (NZ)
+         ; yes we have
+         DI = &usersegment2
+      ELSE
+         DI = &nodataseg
+      ENDIF
+      writeobject1(DI,1)
+      atleastonesegment = 1
+      REPEAT
+         EXIT (BX.0 = ')' || BX.0 = 0)
+         BX++
+      ENDREP
+      AX = BX
+      STC
+      EXIT
+   ENDIF
+   IF (AL = DECLAREDATA)
+      writeobject1(&datasegment,1)
+   ELSE
+      ; declarecode
+      writeobject1(&codesegment1,0)
+      ; data segment?
+      TEST whichsegs,WHICHSEG_DATA
+      IF (NZ)
+         BX = &codesegment2
+      ELSE
+         BX = &nodataseg
+      ENDIF
+      writeobject1(BX,1)
+   ENDIF
+   AX = cssegposD
+   atleastonesegment = 1
+   STC
+END
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+create_segment_win (csseg,cssegposD)
+FAR
+BYTE
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+AL = csseg
+DO
+   IF (AL = DECLARESTACK)
+      writeobject1(&stacksegment,1)
+      BX = cssegposD
+      removewhitespace(BX)
+      BX = AX
+      IF (BX.0 >= '0' && BX.0 <= '9')
+         writeobject1(&db_t,0)
+         writenumber(cssegposD,0)
+         BX = AX
+         writeobject1(&space_t,0)
+         writeobject1(&dupzero_t,1)
+      ENDIF
+      AX = BX
+      atleastonesegment = 1
+      STC
+      EXITL
+   ENDIF
+   IF (AL = DECLARECODE && userseg = 1)
+      BX = cssegposD
+      DI = &usersegname
+      writeobject2(DI,&usersegment1w,0)
+      writeobject1(DI,0)
+      ; test if we have had a data segment
+      TEST whichsegs,WHICHSEG_DATA
+      IF (NZ)
+         ; yes we have
+         DI = &usersegment2w
+      ELSE
+         DI = &nodataseg
+      ENDIF
+      writeobject1(DI,1)
+      atleastonesegment = 1
+      REPEAT
+         EXIT (BX.0 = ')' || BX.0 = 0)
+         BX++
+      ENDREP
+      AX = BX
+      STC
+      EXIT
+   ENDIF
+   IF (AL = DECLAREDATA)
+      writeobject1(&datasegmentw,1)
+   ELSE
+      ; declarecode
+      writeobject1(&codesegment1w,0)
+      ; data segment?
+      TEST whichsegs,WHICHSEG_DATA
+      IF (NZ)
+         BX = &codesegment2w
+      ELSE
+         BX = &nodataseg
+      ENDIF
+      writeobject1(BX,1)
+   ENDIF
+   AX = cssegposD
+   atleastonesegment = 1
+   STC
+END
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+storeglobal (sglobD)
+FAR
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = global_blkD
+SI = BX.blenD.D
+ES = BX.btextD.D
+DI = sglobD
+CL = DI.0
+CH = 0
+DO
+   ES.SI.0 = DI.0
+   DI++
+   SI++
+   IF (SI = TBLOCKLEN)
+      BX.blenD.D = SI
+      aloc(BX)
+      EXIT (NC)
+      BX = BX.bnextD.D
+      ES = BX.btextD.D
+      SI = 0
+      global_blkD = BX
+   ENDIF
+   LOOP {}
+   STC
+END
+IF (NC)
+   error_code = NOSYMBOLSPACE_ER
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   CLC
+   RETURN
+ENDIF
+BX.blenD.D = SI
+STC
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+storelocal (slocD)
+FAR
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = local_blkD
+SI = BX.blenD.D
+ES = BX.btextD.D
+DI = slocD
+CL = DI.0
+CH = 0
+DO
+   ES.SI.0 = DI.0
+   DI++
+   SI++
+   IF (SI = TBLOCKLEN)
+      BX.blenD.D = SI
+      aloc(BX)
+      EXIT (NC)
+      BX = BX.bnextD.D
+      ES = BX.btextD.D
+      SI = 0
+      local_blkD = BX
+   ENDIF
+   LOOP {}
+   STC
+END
+IF (NC)
+   error_code = NOSYMBOLSPACE_ER
+   POP SI
+   POP DI
+   POP CX
+   POP BX
+   CLC
+   RETURN
+ENDIF
+BX.blenD.D = SI
+STC
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+writeobject1 (wo11D,wo1nl)
+FAR
+WORD
+BYTE
+{
+; write one phrase, wo11 to the object code
+PUSH BX
+storeline(wo11D,wo1nl)
+POP BX
+}
+;------------------------
+writenumber (wnstartD,wnnl)
+FAR
+WORD
+BYTE
+{
+PUSH BX
+PUSH CX
+PUSH DI
+BX = wnstartD
+CX = 0
+DI = &number_string
+PUSH DI
+DI++
+removewhitespace(BX)
+BX = AX
+AL = BX.0
+IF (AL >= 'A' && AL <= 'F')
+   DI.0 = '0'
+   DI++
+   CL++
+ENDIF
+REPEAT
+   AL = BX.0
+   uppercase()
+   EXIT ((AL < '0' || AL > '9') && (AL < 'A' || AL > 'F'))
+   DI.0 = AL
+   DI++
+   BX++
+   CL++
+ENDREP
+IF (CL = 0)
+   error_code = NOTNUMERIC_ER
+   POP DI
+   POP CX
+   POP BX
+   CLC
+   RETURN
+ENDIF
+IF (BX.0 = 'H')
+   BX++
+   STC
+ELSE
+   IF (default_number = DEFAULTHEX)
+      STC
+   ELSE
+      CLC
+   ENDIF
+ENDIF
+IF (C)
+   DI.0 = 'H'
+   CL++
+ENDIF
+POP DI
+DI.0 = CL
+storeline(DI,wnnl)
+AX = BX
+STC
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+writeobject2 (wo21D,wo22D,wo2nl)
+FAR
+WORD
+WORD
+BYTE
+{
+PUSH BX
+storeline(wo21D,0)
+storechar(' ')
+storeline(wo22D,wo2nl)
+POP BX
+}
+;-----------------------------
+writeobject3 (wo31D,wo32D,wo33D,wo3nl)
+FAR
+WORD
+WORD
+WORD
+BYTE
+{
+PUSH BX
+writeobject2(wo31D,wo32D,0)
+writeobject2(&space_t,wo33D,wo3nl)
+POP BX
+}
+;-----------------------------
+writechar (wc,wcnl)
+FAR
+BYTE
+BYTE
+{
+PUSH BX
+storechar(wc)
+IF (wcnl = 1)
+   storeNL()
+ENDIF
+POP BX
+}
+;-----------------------------
+pushes_before (type)
+FAR
+BYTE
+{
+
+; check the soc flag and perform the saves if required
+IF (type = 0 && keep = 0) ; keep
+   RETURN
+ENDIF
+IF (type <> 0 && saveon = 0)
+   RETURN
+ENDIF
+
+PUSH BX
+PUSH CX
+PUSH SI
+PUSH DI
+
+; save the registers
+IF (type = 0) ; keep
+   CL = keep
+   SI = &keep_list
+ELSE
+   CL = saveon
+   SI = &saveon_list
+ENDIF
+CH = 0
+DO
+   ; write out PUSH <reg>
+   writeobject1(&push_t,0)
+   writechar(32,0)
+   BX = SI.0.D ; reg structure
+   SI += 2
+   BX++
+   writechar(BX.0,0)
+   writechar(BX.1,1)
+   LOOP
+END
+
+POP DI
+POP SI
+POP CX
+POP BX
+}
+;------------------------
+pops_after (type)
+FAR
+BYTE
+{
+; check the soc flag and perform the pops if required
+IF (type = 0 && keep = 0) ; keep
+   RETURN
+ENDIF
+IF (type <> 0 && saveon = 0)
+   RETURN
+ENDIF
+
+PUSH BX
+PUSH CX
+PUSH SI
+PUSH DI
+
+; restore the registers
+IF (type = 0)
+   CL = keep
+   SI = &keep_list
+ELSE
+   CL = saveon
+   SI = &saveon_list
+ENDIF
+CH = 0
+AX = CX
+AX--
+SHL AX,1
+SI += AX ; point to last one
+DO
+   ; write out POP <reg>
+   writeobject1(&pop_t,0)
+   writechar(32,0)
+   BX = SI.0.D ; reg structure
+   SI -= 2
+   BX++
+   writechar(BX.0,0)
+   writechar(BX.1,1)
+   LOOP
+END
+
+POP DI
+POP SI
+POP CX
+POP BX
+}
+;------------------------
+TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port Ä    

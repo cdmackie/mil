@@ -1,0 +1,3509 @@
+; MMACROS (converted successfully)
+
+EXTERNAL BYTE assignments
+
+EXTERNAL FAR writechar (BYTE,BYTE)
+EXTERNAL FAR writeobject1 (WORD,BYTE)
+EXTERNAL FAR writeobject2 (WORD,WORD,BYTE)
+EXTERNAL FAR removewhitespace (WORD)
+EXTERNAL FAR parsesourceline (WORD)
+EXTERNAL FAR translatesource (WORD,WORD,WORD)
+EXTERNAL FAR dealocall (WORD)
+EXTERNAL FAR dstrcpy (WORD,WORD,BYTE)
+EXTERNAL FAR writenumber (WORD,BYTE)
+EXTERNAL FAR storeglobal (WORD)
+EXTERNAL FAR storelocal (WORD)
+EXTERNAL FAR translate_structmem (WORD,BYTE)
+EXTERNAL FAR numasc (WORD,WORD)
+EXTERNAL FAR aloc (WORD)
+EXTERNAL FAR parseassign (WORD,BYTE)
+EXTERNAL FAR end_segment (BYTE)
+EXTERNAL FAR end_segment_win (BYTE)
+EXTERNAL FAR create_segment (BYTE,WORD)
+EXTERNAL FAR create_segment_win (BYTE,WORD)
+EXTERNAL FAR storeprocdef ()
+EXTERNAL FAR strcpy (WORD,WORD)
+EXTERNAL FAR loadupincludefile ()
+EXTERNAL FAR readsourceline ()
+EXTERNAL FAR copy_source_to_object (BYTE)
+EXTERNAL FAR parseregister (WORD)
+EXTERNAL FAR strcmp (WORD,WORD)
+EXTERNAL FAR asctonum (WORD)
+EXTERNAL FAR pushes_before (BYTE)
+EXTERNAL FAR pops_after (BYTE)
+EXTERNAL FAR uppercase ()
+EXTERNAL FAR iswhite ()
+
+INCLUDE mconst.mil
+;------------------------
+DECLARE (DATA)
+INCLUDE mdatainc.mil
+
+MESSAGE iflabel = 'if_000'
+MESSAGE elselabel = 'el_000'
+LIST ellabel = 6,'el_000',34 DUP (0) ; plus room for 'return (cond)'
+MESSAGE filabel = 'fi_000'
+MESSAGE tflabel = 'tl_000'
+MESSAGE sclabel = 'sc_000'
+
+WORD ifcountD
+WORD tfcountD
+WORD sccountD
+
+BYTE iflong
+BYTE elselong
+LIST if_string (80)
+BYTE negate
+BYTE orflag
+BYTE condexit
+
+BYTE save_on
+
+LIST save_stack (31)
+
+WORD flags = OFFSET nequal  ; JNZ     Z
+      DW OFFSET equal   ; JZ
+      DW OFFSET abveq   ; JAE     C
+      DW OFFSET below   ; JB
+      DW OFFSET equal   ; JZ     NZ
+      DW OFFSET nequal  ; JNZ
+      DW OFFSET below   ; JB     NC
+      DW OFFSET abveq   ; JAE
+
+WORD comparisons = OFFSET equal   ; =
+            DW OFFSET nequal
+            DW OFFSET nequal  ; !=
+            DW OFFSET equal
+            DW OFFSET below   ; <
+            DW OFFSET abveq
+            DW OFFSET abv     ; >
+            DW OFFSET beleq
+            DW OFFSET beleq   ; <=
+            DW OFFSET abv
+            DW OFFSET abveq   ; >=
+            DW OFFSET below
+
+MESSAGE equal = 'JZ'
+MESSAGE nequal = 'JNZ'
+MESSAGE abv = 'JA'
+MESSAGE beleq = 'JBE'
+MESSAGE below = 'JB'
+MESSAGE abveq = 'JAE'
+
+BYTE indo
+BYTE movslen
+WORD movsdirD
+WORD movsrepD
+BYTE movscond
+
+BYTE moduletype
+
+LIST modules = MODULE_DOS,3,'DOS',0,MODULE_WINDOWS,7,'WINDOWS',0,0
+
+MESSAGE firstlocid = 'L_000'
+MESSAGE endlocid = 'L_999'
+LIST newlocid (7)
+LIST lastlocid (7)
+LIST locval (30)
+
+;------------------------
+DECLARE (STACK)
+;------------------------
+DECLARE (CODE)
+;------------------------
+opencurly_p (opencurly_aD)
+WORD
+{
+PUSH BX
+DO
+   BX = opencurly_aD
+   removewhitespace(BX)
+   BX = AX
+   IFL (status = STATUS_PARSEPROC)
+      withinproc += 1
+      IF (winproc_flag = 1)
+         IF (number_paras = 0 && localcount <> 0)
+            writeobject1(&incbp_t,1)
+            writeobject1(&pushbp_movbp_t,1)
+         ENDIF
+         writeobject1(&pushmovds_t,1)
+      ENDIF
+      IF (localcount <> 0)
+         ; set the last local
+         update_local(0) ; write L_999 = lastlocid + locval
+         IF (winproc_flag = 0 && number_paras = 0)
+            writeobject1(&pushbp_movbp_t,1)
+         ENDIF
+         writeobject2(&sub_t,&sp_t,0)
+         writeobject1(&comma_t,0)
+         writeobject1(&endlocid,1)
+      ENDIF
+      IF (winproc_flag = 1)
+         writeobject1(&pushsidi,1)
+      ELSE
+         ; check for saveon
+         pushes_before(1)
+      ENDIF
+      SI = statestackptrD
+      SI.0 = status
+      SI.1.D = 0FFFFH
+      statestackptrD += 3
+      STC
+      EXIT
+   ENDIF
+   IF (status = STATUS_STRUCTDEF)
+      status = STATUS_STRUCTMEM
+      STC
+      EXIT
+   ENDIF
+   error_code = NONEEDFOROPENCURLY_ER
+   CLC
+END
+AX = BX
+POP BX
+}
+;-----------------------------
+closecurly_p (closecurly_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+DO
+   BX = closecurly_aD
+   removewhitespace(BX)
+   BX = AX
+   IF (status = STATUS_STRUCTMEM)
+      status = STATUS_START
+      BX = &struct_string
+      BX++
+      translate_structmem(BX,1)
+      ; return C / NC
+      EXITL
+   ENDIF
+   IFL (status <> DECLARECODE)
+      PUSH BX
+      BX = &current_proc_name
+      BX++
+      SI = &variable_string
+      SI++
+      strcpy(BX,SI)
+      SI--
+      SI.0 = AL + 1
+      SI += AX + 1
+      SI.0 = 'X'
+      SI.1 = 0
+      writeobject1(&variable_string,0)
+      writechar(':',1)
+      SI = &save_stack
+      CL = SI.0
+      IF (save_on = 1 && CL <> 0)
+         ; restore all saved registers
+         CH = 0
+         SI++
+         AX = CX
+         AX--
+         SHL AX,1
+         SI += AX
+         DO
+            EXIT (CL = 0)
+            BX = SI.0.D
+            SI -= 2
+            writeobject2(&pop_t,BX,1)
+            LOOP
+         END
+      ENDIF
+      save_on = 0 ; SAVE <reg>
+      ; check for savon
+      IF (winproc_flag = 0)
+         pops_after(1)
+      ELSE
+         writeobject1(&popdisi,1)
+      ENDIF
+      POP BX
+      IF (localcount <> 0)
+         BX = &localblkst
+         dealocall(BX)
+         local_blkD = 0
+         local_posD = 0
+         IF (winproc_flag = 0)
+            writeobject1(&movsp_t,1)
+         ENDIF
+      ENDIF
+      IF (winproc_flag = 1)
+         IF (number_paras <> 0 || localcount <> 0)
+            writeobject1(&leasp_t,1)
+         ENDIF
+         writeobject1(&winprocend,1)
+      ENDIF
+      IF (number_paras <> 0)
+         writeobject1(&popbp_t,1)
+         IF (winproc_flag <> 0)
+            writeobject1(&decbp_t,1)
+         ENDIF
+         BX = &parasblkst
+         dealocall(BX)
+         paras_blkD = 0
+         paras_posD = 0
+      ELSE
+         IF (localcount <> 0)
+            writeobject1(&popbp_t,1)
+            IF (winproc_flag = 1)
+               writeobject1(&decbp_t,1)
+            ENDIF
+         ENDIF
+      ENDIF
+      localcount = 0
+      winproc_flag = 0
+      IF (main_proc = 1)
+         main_proc += 1
+      ELSE
+         writeobject2(&ret_t,&ret_by,1)
+      ENDIF
+      writeobject2(&current_proc_name,&endp_t,1)
+      withinproc -= 1
+      SI = statestackptrD - 3
+      IF (SI.1.D <> 0FFFFH)
+         ; error - loops dont match
+         error_code = BADLOOPCOUNT_ER
+         AX = &statestack
+         statestackptrD = AX
+         CLC
+      ELSE
+         statestackptrD -= 3
+         STC
+      ENDIF
+      PUSHF
+      status = DECLARECODE
+      POPF
+      EXIT
+   ENDIF
+   error_code = NOOPENCURLY_ER
+   CLC
+END
+AX = BX
+POP SI
+POP CX
+POP BX
+}
+;-----------------------------
+default_p (default_aD)
+WORD
+{
+; process the DEFAULT word at address default_a
+PUSH BX
+AL = status
+PUSH AX ; save status
+status = STATUS_DEFAULT
+BX = default_aD
+removewhitespace(BX)
+BX = AX
+IF (BX.0 = '(')
+   BX++
+   parsesourceline(BX)
+   IF (C)
+      SI = AX
+      translatesource(SI,BX,CX)
+      BX = CX
+      IF (C)
+         IF (AL = DEFAULTHEX || AL = DEFAULTDEC || AL = DEFAULTBIN)
+            default_number = AL
+            STC
+         ELSE
+            IF (AL = DEFAULTBYTE || AL = DEFAULTWORD)
+               default_data = AL
+               STC
+            ELSE
+               CLC
+            ENDIF
+         ENDIF
+      ENDIF
+   ENDIF
+ELSE
+   CLC
+ENDIF
+POP AX
+PUSHF
+IF (NC)
+   error_code = INVALIDDEFAULT_ER
+ENDIF
+status = AL
+POPF
+POP BX
+}
+;------------------------
+hex_p (hex_aD)
+WORD
+{
+IF (status = STATUS_DEFAULT)
+   AL = DEFAULTHEX
+   STC
+ELSE
+   CLC
+ENDIF
+}
+;-----------------------------
+decimal_p (decimal_aD)
+WORD
+{
+IF (status = STATUS_DEFAULT)
+   AL = DEFAULTDEC
+   STC
+ELSE
+   CLC
+ENDIF
+}
+;-----------------------------
+bin_p (bin_aD)
+WORD
+{
+IF (status = STATUS_DEFAULT)
+   AL = DEFAULTBIN
+   STC
+ELSE
+   CLC
+ENDIF
+}
+;-----------------------------
+byte_p (byte_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   AL = status
+   IF (AL = STATUS_DEFAULT)
+      AL = DEFAULTBYTE
+      STC
+      EXITL
+   ENDIF
+   IFL (AL = DECLAREDATA || AL = STATUS_EXTERNDEF || withinproc = 1)
+      DO
+         BX = byte_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         PUSH DI
+         DI++
+         DI.0 = GLOBAL_BYTE
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX + 1
+         POP DI
+         AL += 4
+         DI.0 = AL
+         storeglobal(DI)
+         EXITL (NC)
+         DI += 2
+         IF (status = STATUS_EXTERNDEF)
+            writeobject2(&extrn_t,DI,0)
+            writechar(':',0)
+            writeobject1(&byte_t,1)
+            AX = BX
+         ELSE
+            IF (makeallpublic = 1)
+               writeobject2(&public_t,DI,1)
+            ENDIF
+            writeobject2(DI,&db_t,0)
+            IF (BX.0 <> '=')
+               ; could be zero or another variable
+               ; eg. BYTE test1   OR   BYTE test1,test2
+               removewhitespace(BX)
+               ; do we scan for the next variable ?
+               writeobject1(&zero_t,1)
+               AX =  BX
+               STC
+               EXIT
+            ENDIF
+            BX += 2
+            writenumber(BX,1)
+         ENDIF
+         STC
+      END
+      EXITL
+   ENDIF
+   IF (AL = STATUS_LOCAL)
+      DO
+         BX = byte_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         ; 00 type (LOCAL_WORD | LOCAL_BYTE | LOCAL_LIST)
+         ; 01 local id ('000' or '001' etc)
+         ; 04 length of name
+         ; 05 ASCIIZ name
+         ;
+         ; 00 Length of item
+         ; 01 Type
+         ; 02 Namlen
+         ; 03 ASCIIZ name
+         ; NN Local id ('000 or '001', etc) (3 bytes)
+         ;
+         PUSH DI
+         DI++
+         DI.0 = LOCAL_BYTE
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX + 1
+         DI += AX + 2 ; after null
+         CX = AX
+         SI = &newlocid
+         DI.0 = SI.3
+         DI.1 = SI.4
+         DI.2 = SI.5
+         POP DI
+         CL += 7 ; null+namelen+localid+length+type
+         DI.0 = AL
+         storelocal(DI)
+         EXIT (NC)
+         localcount++
+         ; output 'newlocid = lastlocid + locval'
+         update_local(LOCAL_BYTE)
+         AX = BX
+         STC
+      END
+      EXIT
+   ENDIF
+   IF (AL = STATUS_STRUCTMEM)
+      translate_structmem(byte_aD,0)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+word_p (word_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   AL = status
+   IF (AL = STATUS_DEFAULT)
+      AL = DEFAULTWORD
+      STC
+      EXITL
+   ENDIF
+   IFL (AL = DECLAREDATA || AL = STATUS_EXTERNDEF || withinproc = 1)
+      DO
+         BX = word_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         PUSH DI
+         DI++
+         DI.0 = GLOBAL_WORD
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX + 1
+         POP DI
+         AL += 4
+         DI.0 = AL
+         storeglobal(DI)
+         EXITL (NC)
+         DI += 2
+         IF (status = STATUS_EXTERNDEF)
+            writeobject2(&extrn_t,DI,0)
+            writechar(':',0)
+            writeobject1(&word_t,1)
+            AX = BX
+         ELSEL
+            IF (makeallpublic = 1)
+               writeobject2(&public_t,DI,1)
+            ENDIF
+            writeobject2(DI,&dw_t,0)
+            IF (BX.0 <> '=')
+               writeobject1(&zero_t,1)
+               AX =  BX
+               STC
+               EXIT
+            ENDIF
+            BX++
+            removewhitespace(BX)
+            BX = AX
+            DO
+               IF (BX.0 >= '0' && BX.0 <= '9')
+                  writenumber(BX,1)
+                  EXIT
+               ENDIF
+               IF (BX.0 = '&')
+                  SI = &variable_string
+                  SI++
+                  AX = &offset_t
+                  AX++
+                  strcpy(AX,SI)
+                  SI--
+                  SI.0 = AL
+                  writeobject1(SI,0)
+                  BX++
+                  removewhitespace(BX)
+                  BX = AX
+               ENDIF
+               SI = &variable_string
+               SI++
+               strcpy(BX,SI)
+               SI--
+               SI.0 = AL
+               writeobject1(SI,1)
+            END
+         ENDIF
+         STC
+      END
+      EXITL
+   ENDIF
+   IFL (AL = STATUS_LOCAL)
+      DO
+         BX = word_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         ; 00 type (LOCAL_WORD | LOCAL_BYTE | LOCAL_LIST)
+         ; 01 id '000'
+         ; 04 length of name
+         ; 05 ASCIIZ name
+         ;
+         ; 00 Item length
+         ; 01 Type
+         ; 02 Namelen
+         ; 03 ASCIIZ name
+         ; NN  id '000'
+         PUSH DI
+         DI++
+         DI.0 = LOCAL_WORD
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX + 1
+         DI += AX + 2 
+         CX = AX
+         SI = &newlocid
+         DI.0 = SI.3
+         DI.1 = SI.4
+         DI.2 = SI.5
+         POP DI
+         CL += 7
+         DI.0 = CL
+         storelocal(DI)
+         EXIT (NC)
+         localcount++
+         ; output 'newlocid = lastlocid + locval'
+         update_local(LOCAL_WORD)
+         AX = BX
+         STC
+      END
+      EXIT
+   ENDIF
+   IF (AL = STATUS_STRUCTMEM)
+      translate_structmem(word_aD,1)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+update_local (ltype)
+BYTE
+{
+SAVE BX,SI,DI
+
+; write new
+IF (ltype = 0)
+   ; end of locals
+   writeobject2(&endlocid,&equal_t,0)
+ELSE
+   writeobject2(&newlocid,&equal_t,0)
+ENDIF
+writechar(' ',0)
+writeobject1(&lastlocid,0)
+writechar('+',0)
+writeobject1(&locval,1)
+IF (ltype = 0)
+   RETURN
+ENDIF
+;
+; update
+SI = &newlocid
+SI++
+DI = &lastlocid
+DI++
+strcpy(SI,DI)
+DI--
+DI.0 = AL
+SI--
+AL = SI.0
+AH = 0
+SI += AX
+DO
+   IF (SI.0 = '9')
+      SI.0 = '0'
+      SI--
+      CONTINUE
+   ENDIF
+   SI.0 += 1
+END
+SI = &locval
+AL = ltype
+IF (AL = LOCAL_LIST)
+   DI = &number_string
+   SI++
+   strcpy(DI,SI)
+   SI--
+   SI.0 = AL
+ELSE
+   SI.0 = 1
+   SI.1 = '2'
+   SI.2 = 0
+ENDIF
+
+}
+;------------------------
+string_p (string_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   AL = status
+   IFL (AL = DECLAREDATA || withinproc = 1)
+      DO
+         BX = string_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         PUSH DI
+         DI++
+         DI.0 = GLOBAL_STRING
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX
+         POP DI
+         AL += 4
+         DI.0 = AL
+         storeglobal(DI)
+         EXITL (NC)
+         DI += 2
+         IF (makeallpublic = 1)
+            writeobject2(&public_t,DI,1)
+         ENDIF
+         writeobject2(DI,&dw_t,0)
+         writeobject1(&dollarplus4_t,1)
+         writeobject1(&db_t,0)
+         removewhitespace(BX)
+         BX = AX
+         IF (BX.0 = '(')
+            BX++
+            writenumber(BX,0)
+            PUSH AX
+            writeobject1(&comma_t,0)
+            writenumber(BX,1)
+            writeobject1(&db_t,0)
+            writenumber(BX,0)
+            writeobject2(&plus1_t,&dupzero_t,1)
+            POP AX
+            BX = AX
+            IF (BX.0 = ')')
+               BX++
+               AX = BX
+               STC
+            ELSE
+               error_code = NOCLOSEBRACKET_ER
+               CLC
+            ENDIF
+            EXITL
+         ENDIF
+         IFL (BX.0 = '=')
+            ; di points to variable_string
+            DI++
+            BX++
+            REPEAT
+               EXIT (BX.0 = 0 || BX.0 = QUOTE)
+               BX++
+            ENDREP
+            strcpy(BX,DI)
+            DI--
+            DI.0 = AL
+            BX += AX - 1
+            AL -= 2
+            SI = &number_string
+            SI.0 = 6
+            numasc(SI,AX)
+            writeobject2(SI,&comma_t,0)
+            writeobject1(SI,1)
+            writeobject2(&db_t,DI,0)
+            writechar(',',0)
+            writechar('0',1)
+            IF (BX.0 = QUOTE)
+               BX++
+               AX = BX
+               STC
+            ELSE
+               error_code = NOCLOSEQUOTE_ER
+               CLC
+            ENDIF
+            EXIT
+         ENDIF
+         error_code = INVALIDSTRING_ER
+         CLC
+      END
+   ELSE
+      CLC
+   ENDIF
+END
+POP DI
+POP BX
+}
+;-----------------------------
+message_p (message_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   AL = status
+   IFL (AL = DECLAREDATA || withinproc = 1)
+      DO
+         BX = message_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         PUSH DI
+         DI++
+         DI.0 = GLOBAL_MESSAGE
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX
+         POP DI
+         AL += 4
+         DI.0 = AL
+         storeglobal(DI)
+         EXITL (NC)
+         DI += 2
+         IF (makeallpublic = 1)
+            writeobject2(&public_t,DI,1)
+         ENDIF
+         writeobject2(DI,&db_t,0)
+         removewhitespace(BX)
+         BX = AX
+         IF (BX.0 = '(')
+            BX++
+            writenumber(BX,0)
+            PUSH AX
+            writeobject1(&comma_t,0)
+            writenumber(BX,0)
+            writeobject2(&plus1_t,&dupzero_t,1)
+            POP AX
+            BX = AX
+            IF (BX.0 = ')')
+               BX++
+               AX = BX
+               STC
+            ELSE
+               error_code = NOCLOSEBRACKET_ER
+               CLC
+            ENDIF
+            EXITL
+         ENDIF
+         IFL (BX.0 = '=')
+            ; di points to variable_string
+            DI++
+            BX++
+            REPEAT
+               EXIT (BX.0 = 0 || BX.0 = QUOTE)
+               BX++
+            ENDREP
+            PUSH DI
+            CX = 0
+            DX = 0
+            REPEAT
+               AL = BX.0
+               EXIT (AL = 0)
+               BX++
+               IF (DL = 1 && AL = QUOTE)
+                  CH++
+                  EXIT
+               ENDIF
+               IF (AL = BACKSLASH)
+                  IF (DL = 1)
+                     DI.0 = ','
+                     DI++
+                     CL++
+                     CH++
+                     CONTINUE
+                  ENDIF
+                  DI.0 = QUOTE
+                  DI.1 = ','
+                  DI += 2
+                  DL = 1
+                  CL += 2
+                  CH++
+                  CONTINUE
+               ENDIF
+               IF (DL = 1 && AL = SPACE)
+                  DI.0 = ','
+                  DI.1 = QUOTE
+                  DI += 2
+                  DL = 0
+                  CL += 2
+                  CONTINUE
+               ENDIF
+               DI.0 = AL
+               DI++
+               CL++
+               IF (DL <> 1)
+                  CH++
+               ENDIF
+            ENDREP
+            POP DI
+            BX--
+            DI--
+            DI.0 = CL
+            AL = CH
+            AH = 0
+            AL -= 2
+            SI = &number_string
+            SI.0 = 6
+            numasc(SI,AX)
+            writeobject2(SI,&comma_t,0)
+            writeobject1(DI,0)
+            writechar(',',0)
+            writechar('0',1)
+            IF (BX.0 = QUOTE)
+               BX++
+               AX = BX
+               STC
+            ELSE
+               error_code = NOCLOSEQUOTE_ER
+               CLC
+            ENDIF
+            EXIT
+         ENDIF
+         error_code = INVALIDMESSAGE_ER
+         CLC
+      END
+   ELSE
+      CLC
+   ENDIF
+END
+POP DI
+POP BX
+}
+;-----------------------------
+list_p (list_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+DO
+   AL = status
+   IFL (AL = DECLAREDATA || AL = STATUS_EXTERNDEF || withinproc = 1)
+      DO
+         BX = list_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         PUSH DI
+         DI++
+         DI.0 = GLOBAL_LIST
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX + 1
+         POP DI
+         AL += 4
+         DI.0 = AL
+         storeglobal(DI)
+         EXITL (NC)
+         DI += 2
+         IF (status = STATUS_EXTERNDEF)
+            writeobject2(&extrn_t,DI,0)
+            writechar(':',0)
+            writeobject1(&byte_t,1)
+            AX = BX
+            STC
+            EXITL
+         ENDIF
+         IF (makeallpublic = 1)
+            writeobject2(&public_t,DI,1)
+         ENDIF
+         writeobject2(DI,&db_t,0)
+         IF (BX.0 = '(')
+            ; which is test1 DB 10 DUP (0)
+            BX++
+            removewhitespace(BX)
+            BX = AX
+            AL = BX.0
+            IF (AL >= '0' && AL <= '9')
+               writenumber(BX,0)
+               BX = AX
+            ELSE
+               SI = &number_string
+               SI++
+               dstrcpy(BX,SI,')')
+               SI--
+               SI.0 = AL
+               BX += AX
+               writeobject1(SI,0)
+            ENDIF
+            writechar(' ',0)
+            writeobject1(&dupzero_t,1)
+            IF (BX.0 = ')')
+               BX++
+               AX = BX
+               STC
+            ELSE
+               error_code = NOCLOSEQUOTE_ER
+               CLC
+            ENDIF
+            EXITL
+         ENDIF
+         IFL (BX.0 = '=')
+            ; di points to variable_string (len)
+            DI = &variable_string
+            PUSH DI
+            DI++
+            BX++
+            removewhitespace(BX)
+            BX = AX
+            REPEAT
+               AL = BX.0
+               BX++
+               EXIT (AL = 0)
+               DI.0 = AL
+               DI++
+               CL++
+            ENDREP
+            DI.0 = 0
+            POP DI
+            DI.0 = CL
+            writeobject1(DI,1)
+            AX = BX
+            STC
+            EXIT
+         ENDIF
+         error_code = INVALIDLIST_ER
+         CLC
+         EXIT
+      END
+      EXITL
+   ENDIF
+   IFL (AL = STATUS_LOCAL)
+      DO
+         BX = list_aD
+         removewhitespace(BX)
+         BX = AX
+         DI = &variable_string
+         DI++
+         DI.0 = LOCAL_LIST
+         DI += 2
+         dstrcpy(BX,DI,' ')
+         DI--
+         DI.0 = AL
+         BX += AX + 1
+         DI += AX + 2
+         CX = AX
+         removewhitespace(BX)
+         BX = AX
+         IF (BX.0 <> '(')
+            error_code = INVALIDLIST_ER
+            CLC
+            EXIT
+         ENDIF
+         BX++
+         SI = &number_string
+         dstrcpy(BX,SI,')')
+         BX += AX
+         IF (BX.0 <> ')')
+            error_code = NOCLOSEBRACKET_ER
+            CLC
+            EXIT
+         ENDIF
+         SI = &newlocid
+         DI.0 = SI.3
+         DI.1 = SI.4
+         DI.2 = SI.5
+         DI = &variable_string
+         CL += 7
+         DI.0 = CL
+         storelocal(DI)
+         EXIT (NC)
+         localcount++
+         update_local(LOCAL_LIST)
+         AX = BX
+         STC
+      END
+      EXIT
+   ENDIF
+   IF (AL = STATUS_STRUCTMEM)
+      translate_structmem(list_aD,2)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+array_p (array_aD)
+WORD
+{
+; Syntax of ARRAY macro is as follows
+; ARRAY NAME [NN] OF TYPE
+;  where type is optional (defaul BYTE)
+;  where nn is array value
+; Eg. ARRAY name [10] -> name DB 10 DUP (0)
+;   accessed by  AL = name[0]  ->  MOV AL,BYTE PTR [name+0]
+;    where the index wil be 0..9
+PUSH BX
+PUSH SI
+PUSH DI
+DO
+   AL = status
+   IFL (AL = DECLAREDATA || AL = STATUS_EXTERNDEF || withinproc = 1)
+      DO
+         BX = array_aD
+         removewhitespace(BX)
+         BX = AX
+         ; pointing at the name
+         DI = &variable_string
+         DI++
+         DI.0 = GLOBAL_ARRAY
+         DI++
+         SI = DI
+         DI++
+         XOR CX,CX
+         REPEAT
+            AL = BX.0
+            iswhite()
+            EXIT (C)
+            EXIT (AL = 0 || AL = '[')
+            DI.0 = AL
+            BX++
+            DI++
+            CX++
+         ENDREP
+         removewhitespace(BX)
+         BX = AX
+         AL = BX.0
+         IF (AL <> '[')
+            error_code = INVALIDARRAY_ER
+            CLC
+            EXITL
+         ENDIF
+         SI.0 = CL
+         DI.0 = 0
+         DI++
+         IF (makeallpublic = 1)
+            writeobject2(&public_t,SI,1)
+         ENDIF
+         writeobject2(SI,&db_t,0)
+         ; name [nn][mm] -> DB (nn)*(mm)
+         PUSH DI ; position for number of dims
+         DI++
+         XOR CX,CX
+         REPEAT
+            removewhitespace(BX)
+            BX = AX
+            EXITL (BX.0 <> '[')
+            BX++
+            removewhitespace(BX)
+            BX = AX
+            writechar('(',0)
+            AL = BX.0
+            ;
+            SI = &number_string
+            SI++
+            dstrcpy(BX,SI,']')
+            SI--
+            SI.0 = AL
+            BX += AX
+            writeobject1(SI,0)
+            SI++
+            strcpy(SI,DI)
+            DI += AX + 1
+            ;
+            writechar(')',0)
+            REPEAT
+               EXIT (BX.0 = ']' || BX.0 = 0)
+               BX++
+            ENDREP
+            EXIT (BX.0 = 0)
+            BX++
+            removewhitespace(BX)
+            BX = AX
+            CX++
+            EXIT (BX.0 <> '[')
+            writechar('*',0)
+         ENDREPL
+         ; set number of dims
+         POP SI
+         SI.0 = CL
+         ; exit with BX at null if ok
+         ; or at '=' if initialise
+         DO
+            IF (BX.0 = 0)
+               STC
+               EXITL
+            ENDIF
+            IF (BX.0 = '=')
+               ; ???
+               STC
+               EXITL
+            ENDIF
+            ; test for OF TYPE
+            SI = &number_string
+            dstrcpy(BX,SI,' ')
+            BX += AX
+            AX = &of_t
+            AX++
+            strcmp(SI,AX)
+            IF (NC)
+               error_code = INVALIDOF_ER
+               CLC
+               EXIT
+            ENDIF
+            removewhitespace(BX)
+            BX = AX ; at type
+            SI++
+            strcpy(BX,SI)
+            IF (AL = 0)
+               error_code = INVALIDOF_ER
+               CLC
+               EXIT
+            ENDIF
+            SI--
+            SI.0 = AL
+            writechar('*',0)
+            writechar('(',0)
+            writeobject1(SI,0)
+            writechar(')',0)
+            SI++
+            strcpy(SI,DI)
+            DI += AX + 1
+            STC
+         END
+         EXITL (NC)
+         writechar(' ',0)
+         writeobject1(&dupzero_t,1)
+         ; store the type
+         AX = &variable_string
+         CX = DI - AX
+         DI = AX
+         DI.0 = CL
+         storeglobal(DI)
+         EXIT (NC)
+;         IFL (BX.0 = '=')
+;            ; di points to variable_string (len)
+;            DI = &variable_string
+;            PUSH DI
+;            DI++
+;            BX++
+;            removewhitespace(BX)
+;            BX = AX
+;            REPEAT
+;               AL = BX.0
+;               BX++
+;               EXIT (AL = 0)
+;               DI.0 = AL
+;               DI++
+;               CL++
+;            ENDREP
+;            DI.0 = 0
+;            POP DI
+;            DI.0 = CL
+;            writeobject1(DI,1)
+;            AX = BX
+;            STC
+;            EXIT
+;         ENDIF
+         STC
+      END
+      EXITL
+   ENDIF
+   IF (AL = STATUS_STRUCTMEM)
+      translate_structmem(array_aD,2)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP SI
+POP BX
+}
+;-----------------------------
+far_p (far_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   IF (status = STATUS_EXTERNDEF)
+      BX = far_aD
+      removewhitespace(BX)
+      BX = AX
+      storeexternalprocdef(BX,1)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+near_p (near_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   IF (status = STATUS_EXTERNDEF)
+      BX = near_aD
+      removewhitespace(BX)
+      BX = AX
+      storeexternalprocdef(BX,0)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+windows_p (windows_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+DO
+   IF (status = STATUS_EXTERNDEF)
+      BX = windows_aD
+      removewhitespace(BX)
+      BX = AX
+      storeexternalprocdef(BX,2)
+      EXIT
+   ENDIF
+   CLC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+declare_p (declare_aD)
+WORD
+{
+; process the DECLARE word at address declare_aD
+PUSH BX
+PUSH SI
+AL = status
+PUSH AX
+status = STATUS_DECLARE
+BX = declare_aD
+removewhitespace(BX)
+BX = AX
+DO
+   IF (BX.0 <> '(')
+      CLC
+      EXITL
+   ENDIF
+   BX++
+   parsesourceline(BX)
+   EXIT (NC)
+   SI = AX
+   translatesource(SI,BX,CX)
+   BX = CX
+   EXIT (NC)
+   IF (AL <> DECLARESTACK && AL <> DECLAREDATA && AL <> DECLARECODE)
+      CLC
+      EXIT
+   ENDIF
+   PUSH AX
+   IF (moduletype = MODULE_WINDOWS)
+      end_segment_win(declared_segment)
+   ELSE
+      end_segment(declared_segment)
+   ENDIF
+   POP AX
+   declared_segment = AL
+   ;
+   strcpy(&newusersegname,&usersegname)
+   AL = newuserseg
+   userseg = AL
+   ;
+   IF (moduletype = MODULE_WINDOWS)
+      create_segment_win(declared_segment,BX)
+   ELSE
+      create_segment(declared_segment,BX)
+   ENDIF
+   EXIT (NC)
+   BX = AX
+   IF (BX.0 <> ')')
+      error_code = NOCLOSEQUOTE_ER
+      CLC
+      EXIT
+   ENDIF
+   STC
+END
+POP AX
+PUSHF
+IF (C)
+   AL = declared_segment
+ENDIF
+status = AL
+POPF
+POP SI
+POP BX
+}
+;-----------------------------
+stack_p (stack_aD)
+WORD
+{
+IF (status = STATUS_DECLARE)
+   OR whichsegs,WHICHSEG_STACK
+   AL = DECLARESTACK
+   STC
+ELSE
+   CLC
+ENDIF
+}
+;-----------------------------
+data_p (data_aD)
+WORD
+{
+IF (status = STATUS_DECLARE)
+   OR whichsegs,WHICHSEG_DATA
+   AL = DECLAREDATA
+   STC
+ELSE
+   CLC
+ENDIF
+}
+;-----------------------------
+code_p (code_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+BX = code_aD
+newuserseg = 0
+DO
+   IF (status <> STATUS_DECLARE)
+      CLC
+      EXIT
+   ENDIF
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = ')')
+      OR whichsegs,WHICHSEG_CODE
+      AL = DECLARECODE
+      STC
+      EXIT
+   ENDIF
+   DI = &as_t
+   DI++
+   strcmp(BX,DI)
+   IF (NC)
+      error_code = INVALIDCODEDEC_ER
+      CLC
+      EXIT
+   ENDIF      
+   BX += AX
+   removewhitespace(BX)
+   BX = AX
+   AL = BX.0
+   IF (AL <> '_' && (AL < 'A' || AL > 'Z'))
+      error_code = INVALIDCODEDEC_ER
+      AL = DECLARECODE
+      CLC
+      EXIT
+   ENDIF
+   DI = &newusersegname
+   PUSH DI
+   DI++
+   dstrcpy(BX,DI,')')
+   DI += AX
+   DI.0 = 0
+   POP DI
+   DI.0 = AL
+   OR whichsegs,WHICHSEG_USER
+   AL = DECLARECODE
+   newuserseg = 1
+   STC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+label_p (label_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+; produce the code for the LABEL command
+DO
+   BX = label_aD
+   removewhitespace(BX)
+   BX = AX
+   DI = &variable_string
+   DI++
+   strcpy(BX,DI)
+   IF (AL = 0)
+      error_code = NOLABEL_ER
+      CLC
+      EXIT
+   ENDIF
+   DI--
+   AL++
+   DI.0 = AL
+   PUSH DI
+   PUSH AX
+   writeobject2(&public_t,DI,1)
+   POP AX
+   DI += AX
+   DI.0 = ':'
+   DI.1 = 0
+   POP DI
+   writeobject1(DI,1)
+   STC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+start_p (start_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+; produce the code for the START command
+DO
+   BX = &start_t
+   BX++
+   DI = &variable_string
+   PUSH DI
+   DI++
+   strcpy(BX,DI)
+   DI--
+   AL++
+   DI.0 = AL
+   DI += AX
+   DI.0 = ':'
+   DI.1 = 0
+   POP DI
+   writeobject1(DI,1)
+   STC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+local_p (local_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+IFL (status = STATUS_PARSEPROC && withinproc = 0)
+   AL = status
+   PUSH AX
+   status = STATUS_LOCAL
+   IF (local_blkD = 0)
+      BX = &localblkst
+      aloc(BX)
+      IF (NC)
+         POP SI
+         POP CX
+         POP BX
+         CLC
+         RETURN
+      ENDIF
+      BX = BX.bnextD.D
+      local_blkD = BX
+      local_posD = 0
+      ; set up local variables
+      DI = &newlocid
+      DI++
+      SI = &firstlocid
+      SI++
+      strcpy(SI,DI)
+      DI--
+      DI.0 = AL
+      DI = &lastlocid
+      DI.0 = 1
+      DI.1 = '0'
+      DI.2 = 0
+      DI = &locval
+      DI.0 = 1
+      DI.1 = '0'
+      DI.2 = 0
+   ENDIF
+   BX = local_aD
+   removewhitespace(BX)
+   BX = AX
+   parsesourceline(BX)
+   IF (C)
+      SI = AX
+      translatesource(SI,BX,CX)
+      BX = CX
+   ENDIF
+   POP AX
+   status = AL
+ELSE
+   CLC
+ENDIF
+IF (NC)
+   error_code = CANNOTPUTHERE_ER
+ENDIF
+POP SI
+POP CX
+POP BX
+}
+;-----------------------------
+struct_p (struct_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+IF (status = STATUS_START)
+   DO
+      status = STATUS_STRUCTDEF
+      BX = struct_aD
+      removewhitespace(BX)
+      BX = AX
+      DI = &struct_string
+      DI++
+      dstrcpy(BX,DI,' ')
+      DI--
+      DI.0 = AL
+      BX += AX
+      SI = &struct_lastname
+      SI.0 = 1
+      SI.1 = '0'
+      SI = &struct_lastcount
+      CL = SI.0
+      CH = 0
+      SI++
+      DO
+         SI.0 = '0'
+         SI++
+         LOOP
+      END
+      removewhitespace(BX)
+      BX = AX
+      parsesourceline(BX)
+      EXIT (NC)
+      translatesource(AX,BX,CX)
+   END
+ELSE
+   error_code = CANNOTPUTHERE_ER
+   CLC
+ENDIF
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+do_p (do_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+BX = do_aD
+AL = status
+PUSH AX
+status = STATUS_DO
+removewhitespace(BX)
+BX = AX
+DO
+   PUSH BX
+   AL = indo
+   AH = 0
+   IF (AX = MAXDO)
+      error_code = TOOMANYNESTEDDOS_ER
+      POP BX
+      CLC
+      EXIT
+   ENDIF
+   AX = docountD
+   BX = &donumber
+   BX.0 = 3
+   numasc(BX,AX)
+   writeobject1(&dolabel,0)
+   writeobject1(BX,0)
+   writechar(':',1)
+   POP BX
+   indo += 1
+   STC
+END
+POP AX
+PUSHF
+IF (C)
+   SI = statestackptrD
+   SI.0 = AL
+   AX = docountD
+   SI.1.D = AX
+   statestackptrD += 3
+   docountD += 1
+ELSE
+   status = AL
+ENDIF
+AX = BX
+POPF
+POP SI
+POP BX
+}
+;-----------------------------
+end_p (end_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+BX = end_aD
+IF (status = STATUS_DO)
+   removewhitespace(BX)
+   BX = AX
+   PUSH BX
+   DO
+      statestackptrD -= 3
+      SI = statestackptrD
+      status = SI.0
+      AX = SI.1.D
+      IF (AX = 0FFFFH)
+         error_code = NODOTOEND_ER
+         statestackptrD += 3
+         CLC
+         EXIT
+      ENDIF
+      BX = &donumber
+      BX.0 = 3
+      numasc(BX,AX)
+      writeobject1(&endlabel,0)
+      writeobject1(BX,0)
+      writechar(':',1)
+      indo -= 1
+      STC
+   END
+   POP BX
+   PUSHF
+   AX = BX
+   POPF
+ELSE
+   error_code = NODOTOEND_ER
+   CLC
+ENDIF
+POP SI
+POP BX
+}
+;-----------------------------
+repeat_p (repeat_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+BX = repeat_aD
+AL = status
+PUSH AX
+status = STATUS_REPEAT
+removewhitespace(BX)
+BX = AX
+DO
+   PUSH BX
+   AL = indo
+   AH = 0
+   IF (AX = MAXDO)
+      error_code = TOOMANYNESTEDDOS_ER
+      POP BX
+      CLC
+      EXIT
+   ENDIF
+   AX = docountD
+   BX = &donumber
+   BX.0 = 3
+   numasc(BX,AX)
+   writeobject1(&dolabel,0)
+   writeobject1(BX,0)
+   writechar(':',1)
+   POP BX
+   indo += 1
+   STC
+END
+POP AX
+PUSHF
+IF (C)
+   SI = statestackptrD
+   SI.0 = AL
+   AX = docountD
+   SI.1.D = AX
+   statestackptrD += 3
+   docountD += 1
+ELSE
+   status = AL
+ENDIF
+AX = BX
+POPF
+POP SI
+POP BX
+}
+;-----------------------------
+endrepl_p (endrepl_aD)
+WORD
+{
+exitlong = 1
+endrep_p(endrepl_aD)
+exitlong = 0
+}
+;-----------------------------
+endrep_p (endrep_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+BX = endrep_aD
+IFL (status = STATUS_REPEAT)
+   removewhitespace(BX)
+   BX = AX
+   PUSH BX
+   DO
+      statestackptrD -= 3
+      SI = statestackptrD
+      status = SI.0
+      AX = SI.1.D
+      IF (AX = 0FFFFH)
+         error_code = NOREPEATTOEND_ER
+         statestackptrD += 3
+         CLC
+         EXIT
+      ENDIF
+      BX = &donumber
+      BX.0 = 3
+      numasc(BX,AX)
+      IF (exitlong = 1)
+         writeobject2(&jmplong_t,&dolabel,0)
+      ELSE
+         writeobject2(&jmpshort_t,&dolabel,0)
+      ENDIF
+      writeobject1(BX,1)
+      writeobject1(&endlabel,0)
+      writeobject1(BX,0)
+      writechar(':',1)
+      indo -= 1
+      STC
+   END
+   POP BX
+   PUSHF
+   AX = BX
+   POPF
+ELSE
+   error_code = NOREPEATTOEND_ER
+   CLC
+ENDIF
+POP SI
+POP BX
+}
+;-----------------------------
+exit_p (exit_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+IFL (indo <> 0)
+   DO
+      BX = exit_aD
+      removewhitespace(BX)
+      BX = AX
+      PUSH BX
+      ; scan back through the state stack for the last DO
+      SI = statestackptrD - 3
+      IF (status = STATUS_DO || status = STATUS_REPEAT)
+          ; the last state was the docount
+          AX = SI.1.D
+      ELSE
+         REPEAT
+            EXIT (SI.1.D = 0FFFFH)
+            EXIT (SI.0 = STATUS_DO || SI.0 = STATUS_REPEAT)
+            SI -= 3
+         ENDREP
+         SI -= 3
+         AX = SI.1.D
+      ENDIF
+      BX = &donumber
+      BX.0 = 3
+      numasc(BX,AX)
+      POP BX
+      condexit = 0
+      IF (BX.0 = '(')
+         ; conditional exit
+         condexit = 1
+         DI = &ellabel
+         DI++
+         SI = &endlabel
+         SI++
+         strcpy(SI,DI)
+         DI--
+         DI.0 = AL
+         PUSH DI
+         DI += AX + 1
+         SI = &donumber
+         CL = SI.0
+         CH = 0
+         PUSH CX
+         SI++
+         DO
+            AL = SI.0
+            DI.0 = AL
+            DI++
+            SI++
+            LOOP
+         END
+         DI.0 = 0
+         POP AX
+         POP DI
+         DI.0 += AL
+         negate = 1
+         AL = exitlong
+         iflong = AL
+         if_p(BX)
+         PUSHF
+         IF (C)
+            ; remove the state
+            statestackptrD -= 3
+            SI = statestackptrD
+            status = SI.0
+         ENDIF
+         iflong = 0
+         negate = 0
+         condexit = 0
+         POPF
+         EXIT (NC)
+         PUSHF
+         BX = AX
+         POPF
+      ELSE
+         ; unconditional
+         IF (exitlong = 1)
+            SI = &jmplong_t
+         ELSE
+            SI = &jmpshort_t
+         ENDIF
+         writeobject2(SI,&endlabel,0)
+         writeobject1(&donumber,1)
+         STC
+      ENDIF
+   END
+ELSE
+   error_code = EXITOUTSIDELOOP_ER
+   CLC
+ENDIF
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+exitl_p (exitl_aD)
+WORD
+{
+exitlong = 1
+exit_p(exitl_aD)
+exitlong = 0
+}
+;-----------------------------
+continue_p (continue_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+IFL (indo <> 0)
+   DO
+      BX = continue_aD
+      removewhitespace(BX)
+      BX = AX
+      PUSH BX
+      ; scan back through the state stack for the last DO
+      SI = statestackptrD - 3
+      IF (status = STATUS_DO || status = STATUS_REPEAT)
+          ; the last state was the docount
+          AX = SI.1.D
+      ELSE
+         REPEAT
+            EXIT (SI.1 = 0FFFFH)
+            EXIT (SI.0 = STATUS_DO || SI.0 = STATUS_REPEAT)
+            SI -= 3
+         ENDREP
+         SI -= 3
+         AX = SI.1.D
+      ENDIF
+      BX = &donumber
+      BX.0 = 3
+      numasc(BX,AX)
+      POP BX
+      condexit = 0
+      IF (BX.0 = '(')
+         ; conditional continue
+         condexit = 1
+         DI = &ellabel
+         DI++
+         SI = &dolabel
+         SI++
+         strcpy(SI,DI)
+         DI--
+         DI.0 = AL
+         PUSH DI
+         DI += AX + 1
+         SI = &donumber
+         CL = SI.0
+         CH = 0
+         PUSH CX
+         SI++
+         DO
+            AL = SI.0
+            DI.0 = AL
+            DI++
+            SI++
+            LOOP
+         END
+         DI.0 = 0
+         POP AX
+         POP DI
+         DI.0 += AL
+         negate = 1
+         AL = exitlong
+         iflong = AL
+         if_p(BX)
+         PUSHF
+         IF (C)
+            ; remove the state
+            statestackptrD -= 3
+            SI = statestackptrD
+            status = SI.0
+         ENDIF
+         iflong = 0
+         negate = 0
+         condexit = 0
+         POPF
+         EXIT (NC)
+         PUSHF
+         BX = AX
+         POPF
+      ELSE
+         ; unconditional
+         IF (exitlong = 1)
+            SI = &jmplong_t
+         ELSE
+            SI = &jmpshort_t
+         ENDIF
+         writeobject2(SI,&dolabel,0)
+         writeobject1(&donumber,1)
+         STC
+      ENDIF
+   END
+ELSE
+   error_code = EXITOUTSIDELOOP_ER
+   CLC
+ENDIF
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+continuel_p (continuel_aD)
+WORD
+{
+exitlong = 1
+continue_p(continuel_aD)
+exitlong = 0
+}
+;-----------------------------
+loop_p (loop_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+IF (indo <> 0)
+   BX = loop_aD
+   removewhitespace(BX)
+   BX = AX
+   PUSH BX
+   ; scan back through the state stack for the last DO
+   SI = statestackptrD - 3
+   IF (status = STATUS_DO || status = STATUS_REPEAT)
+       ; the last state was the docount
+       AX = SI.1.D
+   ELSE
+      REPEAT
+         EXIT (SI.1 = 0FFFFH)
+         EXIT (SI.0 = STATUS_DO || SI.0 = STATUS_REPEAT)
+         SI -= 3
+      ENDREP
+      SI -= 3
+      AX = SI.1.D
+   ENDIF
+   BX = &donumber
+   BX.0 = 3
+   numasc(BX,AX)
+   IF (exitlong = 1)
+      SI = &loop_t
+   ELSE
+      SI = &loop_t
+   ENDIF
+   writeobject2(SI,&dolabel,0)
+   writeobject1(BX,1)
+   POP BX
+   STC
+ELSE
+   error_code = LOOPOUTSIDELOOP_ER
+   CLC
+ENDIF
+AX = BX
+POP SI
+POP BX
+}
+;-----------------------------
+ifl_p (ifl_aD)
+WORD
+{
+iflong = 1
+if_p(ifl_aD)
+iflong = 0
+}
+;-----------------------------
+if_p (if_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = if_aD
+removewhitespace(BX)
+BX = AX
+updateiflabel(&iflabel,ifcountD)
+IF (condexit = 0)
+   SI = &elselabel
+   DI = &ellabel
+   DI.1 = SI.1
+   DI.2 = SI.2
+   updateiflabel(&ellabel,ifcountD)
+ENDIF
+SI = statestackptrD
+SI.0 = status
+SI.1.D = ifcountD
+statestackptrD += 3
+AL = status
+PUSH AX
+status = STATUS_IFDEF
+DO
+   IF (BX.0 <> '(')
+      error_code = NOBRACKET_ER
+      CLC
+      EXITL
+   ENDIF
+   BX++
+   scanANDOR(BX)
+   IFL (NC)
+      ; only one comparison
+      orflag = 0
+      IFL (AH < 3)
+         SI = &flags
+         AX = BX
+         IF (BX.0 = 'N')
+            SI += 8
+            BX++
+         ENDIF
+         IF (BX.0 = 'C')
+            SI += 4
+         ELSE
+            IF (AX = BX && BX.0 <> 'Z')
+               error_code = NOTFLAG_ER
+               CLC
+               EXITL
+            ENDIF
+         ENDIF
+         AL = iflong
+         XOR AL,negate
+         IF (AL = 1)
+            SI = SI.2.D
+         ELSE
+            SI = SI.0.D
+         ENDIF
+         IF (iflong = 1)
+            PUSH SI
+            updateiflabel(&sclabel,sccountD)
+            sccountD += 1
+            POP SI
+            writeobject2(SI,&sclabel,1)
+            writeobject2(&jmplong_t,&ellabel,1)
+            writeobject1(&sclabel,0)
+            writechar(':',1)
+         ELSE
+            writeobject2(SI,&ellabel,1)
+         ENDIF
+         STC
+         EXITL
+      ENDIF
+      SI = &if_string
+      dstrcpy(BX,SI,')')
+      BX += AX
+      IF (BX.0 <> ')')
+         error_code = NOCLOSEBRACKET_ER
+         CLC
+         EXITL
+      ENDIF
+      parseassign(SI,0)
+      EXITL (NC)
+      IF (iflong = 1)
+         generatecmp(&iflabel,1)
+         writeobject2(&jmplong_t,&ellabel,1)
+         writeobject1(&iflabel,0)
+         writechar(':',1)
+      ELSE
+         generatecmp(&ellabel,0)
+      ENDIF
+      STC
+   ELSEL
+      ; 1+ comparisons
+      orflag = AL
+      IF (negate = 1)
+         AL = 0 - orflag
+         orflag = AL
+      ENDIF
+      IF (orflag = 1)
+         orlist(BX,&iflabel,0)
+         EXITL (NC)
+         BX = AX
+         IF (iflong = 1)
+            writeobject2(&jmplong_t,&ellabel,1)
+         ELSE
+            writeobject2(&jmpshort_t,&ellabel,1)
+         ENDIF
+         writeobject1(&iflabel,0)
+         writechar(':',1)
+      ELSE
+         IF (iflong = 1)
+            andlist(BX,&iflabel,0)
+            writeobject1(&jmpplus5_t,1)
+            writeobject1(&iflabel,0)
+            writechar(':',0)
+            writechar(' ',0)
+            writeobject2(&jmplong_t,&ellabel,1)
+         ELSE
+            andlist(BX,&ellabel,0)
+            EXIT (NC)
+         ENDIF
+         BX = AX
+      ENDIF
+      STC
+   ENDIF
+END
+POP AX
+PUSHF
+IF (C)
+   ifcountD += 1
+   status = STATUS_IF
+   STC
+ELSE
+   error_code = INVALIDIF_ER
+   status = AL
+   statestackptrD -= 3
+   CLC
+ENDIF
+AX = BX
+POPF
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;-----------------------------
+scanANDOR (scandorposD)
+WORD
+{
+PUSH BX
+PUSH CX
+BX = scandorposD
+CX = 0
+REPEAT
+   AL = BX.0
+   IF (AL = QUOTE)
+      XOR CH,1
+   ENDIF
+   IF (AL = 0 || (CH = 0 && AL = ')'))
+      CLC
+      EXIT
+   ENDIF
+   IF (AL = '(' && CH = 0)
+      PUSH CX
+      CH = 0
+      REPEAT
+         AL = BX.0
+         IF (AL = QUOTE)
+            XOR CH,1
+         ENDIF
+         EXIT (BX.0 = 0 || (CH = 0 && BX.0 = ')'))
+         BX++
+      ENDREP
+      POP CX
+      IF (BX.0 = 0)
+         CLC
+         EXIT
+      ENDIF
+      BX++
+      CONTINUE
+   ENDIF
+   IF (AL = '&' && BX.1 = '&' && CH = 0)
+      AL = 0FFH
+      STC
+      EXIT
+   ENDIF
+   IF (AL = '|' && BX.1 = '|' && CH = 0)
+      AL = 1
+      STC
+      EXIT
+   ENDIF
+   BX++
+   CL++
+ENDREP
+AH = CL
+POP CX
+POP BX
+}
+;-----------------------------
+updateiflabel (uiflabD,uifcountD)
+WORD
+WORD
+{
+PUSH BX
+BX = uiflabD
+PUSH BX
+BX += 3
+BX.0 = 3
+AX = uifcountD
+numasc(BX,AX)
+AL = BX.0
+BX.0 = '_'
+AL += 3
+POP BX
+BX.0 = AL
+POP BX
+}
+;-----------------------------
+andlist (andposD,tofalseD,andlabD)
+WORD
+WORD
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+BX = andposD
+REPEAT
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = ')')
+      BX++
+      STC
+      EXITL
+   ENDIF
+   IF (BX.0 = '&' || BX.0 = '|')
+      BX++
+      CONTINUE
+   ENDIF
+   IFL (BX.0 = '(')
+      BX++
+      scanANDOR(BX)
+      EXITL (NC)
+      orflag = AL
+      IF (negate = 1)
+         AL = 0 - orflag
+         orflag = AL
+      ENDIF
+      IF (orflag = 1)
+         labelTF(1)
+         orlist(BX,&tflabel,0)
+         EXITL (NC)
+         BX = AX
+         writeobject2(&jmpshort_t,tofalseD,1)
+         writeobject1(&tflabel,0)
+         writechar(':',1)
+      ELSE
+         labelTF(0)
+         andlist(BX,&tflabel,0)
+         EXITL (NC)
+         BX = AX
+         writeobject1(&jmpplus4_t,1)
+         writeobject1(&tflabel,0)
+         writechar(':',1)
+         writeobject2(&jmpshort_t,tofalseD,1)
+      ENDIF
+      STC
+   ELSE
+      SI = &if_string
+      PUSH SI
+      CH = 0
+      REPEAT
+         AL = BX.0
+         IF (AL = QUOTE)
+            XOR CH,1
+         ENDIF
+         IF (AL = SPACE && CH = 0)
+            BX++
+            CONTINUE
+         ENDIF
+         EXIT (AL = 0)
+         EXIT (CH = 0 && (AL = '&' || AL = '|' || AL = ')'))
+         SI.0 = AL
+         SI++
+         BX++
+      ENDREP
+      SI.0 = 0
+      POP SI
+      parseassign(SI,0)
+      EXIT (NC)
+      generatecmp(tofalseD,0)
+   ENDIF
+ENDREPL
+PUSHF
+AX = BX
+POPF
+POP SI
+POP CX
+POP BX
+}
+;-----------------------------
+orlist (orposD,totrueD,orlabD)
+WORD
+WORD
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+BX = orposD
+REPEAT
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = ')')
+      BX++
+      STC
+      EXITL
+   ENDIF
+   IF (BX.0 = '&' || BX.0 = '|')
+      BX++
+      CONTINUE
+   ENDIF
+   IFL (BX.0 = '(')
+      BX++
+      scanANDOR(BX)
+      EXITL (NC)
+      orflag = AL
+      IF (negate = 1)
+         AL = 0 - orflag
+         orflag = AL
+      ENDIF
+      IF (orflag = 1)
+         labelTF(1)
+         orlist(BX,&tflabel,0)
+         EXITL (NC)
+         BX = AX
+         writeobject1(&jmpplus4_t,1)
+         writeobject1(&tflabel,0)
+         writechar(':',1)
+         writeobject2(&jmpshort_t,totrueD,1)
+      ELSE
+         labelTF(0)
+         andlist(BX,&tflabel,0)
+         EXITL (NC)
+         BX = AX
+         writeobject2(&jmpshort_t,totrueD,1)
+         writeobject1(&tflabel,0)
+         writechar(':',1)
+      ENDIF
+      STC
+   ELSE
+      SI = &if_string
+      PUSH SI
+      CH = 0
+      REPEAT
+         AL = BX.0
+         IF (AL = QUOTE)
+            XOR CH,1
+         ENDIF
+         IF (AL = SPACE && CH = 0)
+            BX++
+            CONTINUE
+         ENDIF
+         EXIT (AL = 0)
+         EXIT (CH = 0 && (AL = '&' || AL = '|' || AL = ')'))
+         SI.0 = AL
+         SI++
+         BX++
+      ENDREP
+      SI.0 = 0
+      POP SI
+      parseassign(SI,0)
+      EXIT (NC)
+      generatecmp(totrueD,1)
+   ENDIF
+ENDREPL
+PUSHF
+AX = BX
+POPF
+POP SI
+POP CX
+POP BX
+}
+;-----------------------------
+labelTF (lTF)
+BYTE
+{
+PUSH BX
+IF (lTF = 0)
+   AL = 'f'
+ELSE
+   AL = 't'
+ENDIF
+BX = &tflabel
+BX++
+BX.0 = AL
+BX--
+updateiflabel(BX,tfcountD)
+tfcountD += 1
+POP BX
+}
+;-----------------------------
+generatecmp (gcmplabD,gcmpflag)
+WORD
+BYTE
+{
+PUSH BX
+PUSH DI
+PUSH SI
+AL = opcode
+AL--
+AH = 0
+SHL AX,1
+SHL AX,1
+BX = &comparisons
+BX += AX
+SI = BX.0.D
+AH = gcmpflag
+AL = negate
+XOR AL,AH
+IF (AL = 0)
+   SI = BX.2.D
+ENDIF
+PUSH BX
+PUSH DI
+PUSH SI
+BX = &assignments
+assigncode = 1
+DI = &assigna1
+AL = DI.0
+AL--
+AH = 0
+CL = BX.0
+BX++
+CH = 0
+MUL CX
+BX += AX
+SI = &assigna2
+AL = SI.0
+AL--
+AH = 0
+BX += AX
+AL = BX.0
+DO
+   IF (AL = 0)
+      error_code = CANNOTASSIGN_ER
+      CLC
+      EXIT
+   ENDIF
+   TEST AL,80H ; is it -ve ?
+   IF (NZ)
+      IF (opcode <> ASSIGN_EQUAL)
+         error_code = INVALIDASSIGN_ER
+         CLC
+         EXIT
+      ENDIF
+      NEG AL
+   ENDIF
+   assigncode = AL
+   STC
+END
+POP SI
+POP DI
+POP BX
+IFL (C)
+   DO
+      BX = &assigna1
+      BX++
+      DI = &assigna2
+      DI++
+      IF (assigncode = 1)
+         writeobject2(&cmp_t,BX,0)
+         writechar(',',0)
+         writeobject1(DI,1)
+         writeobject2(SI,gcmplabD,1)
+         EXITL
+      ENDIF
+      IF (assigncode = 4)
+         writeobject2(&mov_t,&al_t,0)
+         writechar(',',0)
+         writeobject1(BX,1)
+         writeobject2(&cmp_t,&al_t,0)
+         writechar(',',0)
+         writeobject1(DI,1)
+         writeobject2(SI,gcmplabD,1)
+         EXIT
+      ENDIF
+      writeobject2(&mov_t,&ax_t,0)
+      writechar(',',0)
+      writeobject1(BX,1)
+      writeobject2(&cmp_t,&ax_t,0)
+      writechar(',',0)
+      writeobject1(DI,1)
+      writeobject2(SI,gcmplabD,1)
+   END
+   STC
+ENDIF
+POP SI
+POP DI
+POP BX
+}
+;-----------------------------
+elsel_p (elsel_aD)
+WORD
+{
+elselong = 1
+else_p(elsel_aD)
+elselong = 0
+}
+;-----------------------------
+else_p (else_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+PUSH SI
+IF (status = STATUS_IF)
+   BX = statestackptrD - 3
+   AX = BX.1.D
+   PUSH AX
+   updateiflabel(&filabel,AX)
+   IF (elselong = 1)
+      writeobject2(&jmplong_t,&filabel,1)
+   ELSE
+      writeobject2(&jmpshort_t,&filabel,1)
+   ENDIF
+   SI = &elselabel
+   DI = &ellabel
+   DI.1 = SI.1
+   DI.2 = SI.2
+   POP AX
+   updateiflabel(&ellabel,AX)
+   writeobject1(&ellabel,0)
+   writechar(':',1)
+   status = STATUS_ELSE
+   STC
+ELSE
+  error_code = NOIF_ER
+  CLC
+ENDIF
+PUSHF
+AX = else_aD
+POPF
+POP SI
+POP DI
+POP BX
+}
+;-----------------------------
+endif_p (endif_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+IF (status = STATUS_IF || status = STATUS_ELSE)
+   DO
+      statestackptrD -= 3
+      BX = statestackptrD
+      IF (BX.1.D = 0FFFFH)
+         error_code = NOIF_ER
+         statestackptrD += 3
+         CLC
+         EXIT
+      ENDIF
+      IF (status = STATUS_IF)
+         PUSH DI
+         SI = &ellabel
+         DI = &elselabel
+         SI.1 = DI.1
+         SI.2 = DI.2
+         POP DI
+      ELSE
+         SI = &filabel
+      ENDIF
+      updateiflabel(SI,BX.1.D)
+      writeobject1(SI,0)
+      writechar(':',1)
+      status = BX.0
+      STC
+   END
+ELSE
+   error_code = NOIF_ER
+   CLC
+ENDIF
+AX = endif_aD
+POP SI
+POP BX
+}
+;-----------------------------
+external_p (external_aD)
+WORD
+{
+; format EXTERNAL WORD test1
+; or     EXTERNAL main()
+PUSH BX
+BX = external_aD
+removewhitespace(BX)
+BX = AX
+AL = status
+PUSH AX
+DO
+   status = STATUS_EXTERNDEF
+   parsesourceline(BX)
+   IF (C)
+      ; for WORD, BYTE, STRING, MESSAGE, FAR, NEAR, WINDOWS
+      translatesource(AX,BX,CX)
+   ELSE
+      ; must be a NEAR procedure definition
+      storeexternalprocdef(BX,0)
+   ENDIF
+END
+POP AX
+PUSHF
+status = AL
+POPF
+POP BX
+}
+;-----------------------------
+storeexternalprocdef (extprocD,proctype)
+WORD
+BYTE
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+; must be a NEAR procedure definition
+BX = extprocD
+DO
+   DI = &variable_string
+   DI++
+   PUSH DI
+   CL = 0
+   REPEAT
+      AL = BX.0
+      EXIT (AL = 0 || AL = SPACE || AL = '(')
+      DI.0 = AL
+      BX++
+      DI++
+      CL++
+   ENDREP
+   DI.0 = 0
+   POP DI
+   IF (AL = 0)
+      error_code = NOBRACKET_ER
+      CLC
+      EXITL
+   ENDIF
+   DI--
+   DI.0 = CL
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 <> '(')
+      CLC
+      EXITL
+   ENDIF
+   BX++
+   SI = &procdef_string
+   DO
+      IF (proctype = 0)
+         SI.0 = PROC_NEAR
+         EXIT
+      ENDIF
+      IF (proctype = 2)
+         SI.0 = PROC_WINDOWS
+         EXIT
+      ENDIF
+      SI.0 = PROC_FAR
+   END
+   SI++
+   PUSH SI
+   SI++
+   CL = 0
+   REPEAT
+      removewhitespace(BX)
+      BX = AX
+      DO
+         IF (BX.0 = ')')
+            STC
+            EXIT
+         ENDIF
+         IF (BX.0 = 'W')
+            SI.0 = PARAMETER_WORD
+            SI++
+            CL++
+            STC
+            EXIT
+         ENDIF
+         IF (BX.0 = 'B')
+            SI.0 = PARAMETER_BYTE
+            SI++
+            CL++
+            STC
+            EXIT
+         ENDIF
+         IF (BX.0 = 'S')
+            SI.0 = PARAMETER_STRING
+            SI++
+            CL++
+            STC
+            EXIT
+         ENDIF
+         IF (BX.0 = 'M')
+            SI.0 = PARAMETER_MESSAGE
+            SI++
+            CL++
+            STC
+            EXIT
+         ENDIF
+         IF (BX.0 = 'L')
+            SI.0 = PARAMETER_LIST
+            SI++
+            CL++
+            STC
+            EXIT
+         ENDIF
+         CLC
+      END
+      IF (NC)
+         error_code = NOTTYPE_ER
+         CLC
+         EXIT
+      ENDIF
+      REPEAT
+         AL = BX.0
+         EXIT (AL = ',' || AL = ')' || AL = 0)
+         BX++
+      ENDREP
+      IF (AL = 0)
+         CLC
+         EXIT
+      ENDIF
+      IF (AL = ')')
+         STC
+         EXIT
+      ENDIF
+      BX++
+   ENDREPL
+   POP DI ; restore to #p
+   EXIT (NC)
+   DI.0 = CL
+   SI++
+   DI = &variable_string
+   DI++
+   PUSH DI
+   strcpy(DI,SI)
+   DI = SI + AX
+   DI.0 = 0FFH
+   SI--
+   SI.0 = AL
+   POP DI
+   storeprocdef()
+   writeobject2(&extrn_t,DI,0)
+   writechar(':',0)
+   IF (proctype = 0)
+      writeobject1(&near_t,1)
+   ELSE
+      writeobject1(&far_t,1)
+   ENDIF
+   AX = BX
+   STC
+END
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+return_p (return_aD)
+WORD
+{
+PUSH BX
+PUSH SI
+DO
+   IFL (status <> DECLARECODE)
+      ; create a jmp to the end
+      BX = &current_proc_name
+      BX++
+      SI = &variable_string
+      SI++
+      strcpy(BX,SI)
+      SI--
+      SI.0 = AL + 1
+      SI += AX + 1
+      SI.0 = 'X'
+      SI.1 = 0
+      ;
+      ; test if its conditional
+      BX = return_aD
+      removewhitespace(BX)
+      BX = AX
+      IF (BX.0 <> 0)
+         IF (BX.0 <> '(')
+            error_code = NOBRACKET_ER
+            CLC
+            EXIT
+         ENDIF
+         ; translate the condition
+         condexit = 1
+         DI = &ellabel
+         DI++
+         SI = &variable_string
+         SI++
+         strcpy(SI,DI)
+         DI--
+         DI.0 = AL
+         negate = 1
+         iflong = 1
+         if_p(BX) ; rets c/nc
+         BX = AX
+         IF (C)
+            ; remove the state
+            statestackptrD -= 3
+            SI = statestackptrD
+            status = SI.0
+            STC
+         ENDIF
+         PUSHF
+         ; restore the ellabel
+         DI = &ellabel
+         DI++
+         SI = &elselabel
+         SI++
+         strcpy(SI,DI)
+         DI--
+         DI.0 = AL
+         iflong = 0
+         negate = 0
+         condexit = 0
+         POPF
+         EXIT
+      ENDIF
+      ; unconditional
+      writeobject2(&jmplong_t,&variable_string,1)
+      AX = return_aD
+      STC
+      EXIT
+   ENDIF
+   ;
+   CLC
+END
+POP SI
+POP BX
+}
+;-----------------------------
+include_p (include_aD)
+WORD
+{
+PUSH BX
+PUSH DI
+BX = include_aD
+removewhitespace(BX)
+BX = AX
+DO
+   IF (BX.0 = 0)
+      error_code = NOINCLUDENAME_ER
+      CLC
+      EXITL
+   ENDIF
+   DI = &includefileS
+   PUSH DI
+   DI = DI.saddrD.D
+   strcpy(BX,DI)
+   BX += AX
+   POP DI
+   DI.slen = AL
+   DI = &includeblkst
+   AX = 0FFFFH
+   DI.bnextD.D = AX
+   DI.bpriorD.D = AX
+   DI.binuse = AL
+   DI.btextD.D = DS
+   DI.blenD.D = 0
+   loadupincludefile()
+   IF (NC)
+      error_code = CANNOTOPENFILE_ER
+      CLC
+      EXIT
+   ENDIF
+   ; have loaded it up - now translate it
+   PUSH BX
+   AX = cblkst_blkD
+   PUSH AX
+   AX = cblkst_posD
+   PUSH AX
+   DI = &includeblkst
+   DI = DI.bnextD.D
+   cblkst_blkD = DI
+   cblkst_posD = 0
+   REPEAT
+      readsourceline()
+      IF (NC)
+         STC
+         EXIT
+      ENDIF
+      CONTINUE (AL = 1)
+      IF (AL = 2)
+         copy_source_to_object(1)
+         CONTINUE
+      ENDIF
+      BX = &sourceline
+      parsesourceline(BX)
+      IF (C)
+         translatesource(AX,BX,CX)
+      ELSE
+         copy_source_to_object(0)
+      ENDIF
+   ENDREP
+   POP AX
+   cblkst_posD = AX
+   POP AX
+   cblkst_blkD = AX
+   POP BX
+   STC
+END
+POP DI
+POP BX
+}
+;-----------------------------
+movs_p (movs_aD)
+WORD
+{
+PUSH BX
+movements(movs_aD)
+IF (NC)
+   POP BX
+   RETURN
+ENDIF
+BX = AX
+DO
+   EXIT (NC)
+   IF (movslen = 0)
+      error_code = MUSTSPECIFYBORW_ER
+      CLC
+      EXIT
+   ENDIF
+   IF (movsdirD <> 0)
+      writeobject1(movsdirD,1)
+   ENDIF
+   IF (movsrepD <> 0)
+      writeobject1(movsrepD,0)
+      writechar(' ',0)
+   ENDIF
+   writeobject1(&movs_t,0)
+   writechar(movslen,1)
+   STC
+END
+AX = BX
+POP BX
+}
+;-----------------------------
+lods_p (lods_aD)
+WORD
+{
+PUSH BX
+movements(lods_aD)
+IF (NC)
+   POP BX
+   RETURN
+ENDIF
+BX = AX
+DO
+   EXIT (NC)
+   IF (movslen = 0)
+      error_code = MUSTSPECIFYBORW_ER
+      CLC
+      EXIT
+   ENDIF
+   IF (movsdirD <> 0)
+      writeobject1(movsdirD,1)
+   ENDIF
+   IF (movsrepD <> 0)
+      writeobject1(movsrepD,0)
+      writechar(' ',0)
+   ENDIF
+   writeobject1(&lods_t,0)
+   writechar(movslen,1)
+   STC
+END
+AX = BX
+POP BX
+}
+;-----------------------------
+stos_p (stos_aD)
+WORD
+{
+PUSH BX
+movements(stos_aD)
+IF (NC)
+   POP BX
+   RETURN
+ENDIF
+BX = AX
+DO
+   EXIT (NC)
+   IF (movslen = 0)
+      error_code = MUSTSPECIFYBORW_ER
+      CLC
+      EXIT
+   ENDIF
+   IF (movsdirD <> 0)
+      writeobject1(movsdirD,1)
+   ENDIF
+   IF (movsrepD <> 0)
+      writeobject1(movsrepD,0)
+      writechar(' ',0)
+   ENDIF
+   writeobject1(&stos_t,0)
+   writechar(movslen,1)
+   STC
+END
+AX = BX
+POP BX
+}
+;-----------------------------
+scas_p (scas_aD)
+WORD
+{
+PUSH BX
+movements(scas_aD)
+IF (NC)
+   POP BX
+   RETURN
+ENDIF
+BX = AX
+IF (movsrepD <> 0)
+   removewhitespace(BX)
+   BX = AX
+   BX++
+   removewhitespace(BX)
+   BX = AX
+   ; should point to Z or NZ
+   AL = BX.0
+   IF ((AL = 'N' && BX.1 = 'Z') || (AL = 'Z' && BX.1 = 0))
+      movscond = AL
+      STC
+   ELSE
+      error_code = MUSTSPECIFYZORNZ_ER
+      CLC
+   ENDIF
+ENDIF
+DO
+   EXITL (NC)
+   IF (movslen = 0)
+      error_code = MUSTSPECIFYBORW_ER
+      CLC
+      EXITL
+   ENDIF
+   IF (movsdirD <> 0)
+      writeobject1(movsdirD,1)
+   ENDIF
+   IF (movsrepD <> 0)
+      writeobject1(movsrepD,0)
+      IF (movscond = 0)
+         CLC
+         EXIT
+      ENDIF
+      writechar(movscond,0)
+      IF (movscond = 'N')
+         writechar('Z',0)
+      ENDIF
+      writechar(' ',0)
+   ENDIF
+   writeobject1(&scas_t,0)
+   writechar(movslen,1)
+   STC
+END
+AX = BX
+POP BX
+}
+;-----------------------------
+movements (movD)
+WORD
+{
+PUSH BX
+BX = movD
+removewhitespace(BX)
+BX = AX
+movslen = 0
+movsdirD = 0
+movsrepD = 0
+movscond = 0
+DO
+   AL = BX.0
+   IF (AL = 0 || AL = COMMA)
+      STC
+      EXIT
+   ENDIF
+   BX++
+   IF (AL = 'W' || AL = 'B' || AL = 'D')
+      movslen = AL
+      CONTINUE
+   ENDIF
+   IF (AL = 'I' || AL = 'D')
+      IF (AL = 'I')
+         AX = &cld_t
+      ELSE
+         AX = &std_t
+      ENDIF
+      movsdirD = AX
+      CONTINUE
+   ENDIF
+   IF (AL = 'R')
+      AX = &rep_t
+      movsrepD = AX
+      CONTINUE
+   ENDIF
+   error_code = INVALIDSTRINGOPERATION_ER
+   CLC
+END
+AX = BX
+POP BX
+}
+;-----------------------------
+save_p (save_aD)
+WORD save_aD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = save_aD
+DO
+   IF (save_on = 1)
+      error_code = CANNOTSAVEAGAIN_ER
+      CLC
+      EXIT
+   ENDIF
+   DI = &save_stack
+   DI.0 = 0
+   DI++
+   CL = 0
+   REPEAT
+      removewhitespace (BX)
+      BX = AX
+      AL = BX.0
+      IF (AL = ',')
+         BX++
+         CONTINUE
+      ENDIF
+      IF (AL = 0)
+         save_on = 1
+         DI = &save_stack
+         DI.0 = CL
+         STC
+         EXIT
+      ENDIF
+      parseregister (BX)
+      EXIT (NC)
+      SI = AX
+      writeobject2(&push_t,SI,1)
+      DI.0.D = SI
+      DI += 2
+      BX += 2
+      CL++
+   ENDREP
+   IF (NC)
+      error_code = NOTREGISTER_ER
+      CLC
+   ENDIF
+END
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+goto_p (goto_aD)
+WORD goto_aD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = goto_aD
+DO
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = 0)
+      error_code = NOLABEL_ER
+      CLC
+      EXIT
+   ENDIF
+   DI = &variable_string
+   PUSH DI
+   DI++
+   strcpy(BX,DI)
+   DI--
+   DI.0 = AL
+   POP DI
+   writeobject2(&jmplong_t,DI,1)
+   STC   
+END
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+keep_p (keep_aD)
+WORD keep_aD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = keep_aD
+DO
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = 0)
+      ; clear the save on call
+      keep = 0
+      STC
+      EXIT
+   ENDIF
+   ; otherwise parse the registers
+   DI = &keep_list
+   keep = 0
+   REPEAT
+      removewhitespace(BX)
+      BX = AX
+      AL = BX.0
+      IF (AL = 0)
+         STC
+         EXIT
+      ENDIF
+      IF (AL = ',')
+         BX++
+         CONTINUE
+      ENDIF
+      parseregister(BX)
+      IF (NC) ; invalid register
+         AL = INVALIDREG_ER
+         CLC
+         EXIT
+      ENDIF
+      ; ax points to the REGISTER structure
+      SI = AX
+      IF (SI.2 = 'H' || SI.2 = 'L')
+         AL = INVALIDREG_ER
+         CLC
+         EXIT
+      ENDIF
+      IF (keep = MAXKEEP)
+         AL = TOOMANYREG_ER
+         CLC
+         EXIT
+      ENDIF
+      ; add register to keep list
+      DI.0.D = SI
+      DI += 2
+      keep++
+      BX += 2
+   ENDREP
+   IF (NC)
+      error_code = AL
+      keep = 0
+      CLC
+      EXIT
+   ENDIF
+   STC   
+END
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+saveon_p (saveon_aD)
+WORD saveon_aD
+{
+PUSH BX
+PUSH CX
+PUSH DI
+PUSH SI
+BX = saveon_aD
+DO
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 = 0)
+      ; clear the save on call
+      saveon = 0
+      STC
+      EXIT
+   ENDIF
+   ; otherwise parse the registers
+   DI = &saveon_list
+   saveon = 0
+   REPEAT
+      removewhitespace(BX)
+      BX = AX
+      AL = BX.0
+      IF (AL = 0)
+         STC
+         EXIT
+      ENDIF
+      IF (AL = ',')
+         BX++
+         CONTINUE
+      ENDIF
+      parseregister(BX)
+      IF (NC) ; invalid register
+         AL = INVALIDREG_ER
+         CLC
+         EXIT
+      ENDIF
+      ; ax points to the REGISTER structure
+      SI = AX
+      IF (SI.2 = 'H' || SI.2 = 'L')
+         AL = INVALIDREG_ER
+         CLC
+         EXIT
+      ENDIF
+      IF (saveon = MAXKEEP)
+         AL = TOOMANYREG_ER
+         CLC
+         EXIT
+      ENDIF
+      ; add register to keep list
+      DI.0.D = SI
+      DI += 2
+      saveon++
+      BX += 2
+   ENDREP
+   IF (NC)
+      error_code = AL
+      saveon = 0
+      CLC
+      EXIT
+   ENDIF
+   STC   
+END
+AX = BX
+POP SI
+POP DI
+POP CX
+POP BX
+}
+;------------------------
+module_p (module_aD)
+WORD
+{
+PUSH BX
+PUSH CX
+PUSH SI
+PUSH DI
+DO
+   IF (moduletype <> 0)
+      ; already defined
+      error_code = MODULEDEFINED_ER
+      CLC
+      EXITL
+   ENDIF
+   BX = module_aD
+   removewhitespace(BX)
+   BX = AX
+   IF (BX.0 <> '(')
+      error_code = INVALIDMODULE_ER
+      CLC
+      EXITL
+   ENDIF
+   BX++
+   removewhitespace(BX)
+   BX = AX
+   DI = &variable_string
+   PUSH DI
+   REPEAT
+      AL = BX.0
+      iswhite()
+      EXIT (C)
+      EXIT (AL = 0 | AL = ')')
+      BX++
+      uppercase()
+      DI.0 = AL
+      DI++
+   ENDREP
+   DI.0 = 0
+   POP DI
+   SI = &modules
+   REPEAT
+      IF (SI.0 = 0)
+         CLC
+         EXIT
+      ENDIF
+      SI += 2
+      strcmp(DI,SI)
+      EXIT (C)
+      SI--
+      AL = SI.0
+      AH = 0
+      AL += 2
+      SI += AX
+   ENDREP
+   IF (NC)
+      error_code = INVALIDMODULE_ER
+      CLC
+      EXIT
+   ENDIF
+   SI -= 2
+   moduletype = SI.0
+   STC
+   AX = BX
+END
+POP DI
+POP SI
+POP CX
+POP BX
+}
+;------------------------
+TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port Ä    

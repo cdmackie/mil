@@ -1,0 +1,501 @@
+;MDATA (coverted successfully)
+
+INCLUDE mconst.mil
+
+EXTERNAL NEAR default_p()
+EXTERNAL NEAR hex_p()
+EXTERNAL NEAR decimal_p()
+EXTERNAL NEAR bin_p()
+EXTERNAL NEAR byte_p()
+EXTERNAL NEAR word_p()
+EXTERNAL NEAR string_p()
+EXTERNAL NEAR message_p()
+EXTERNAL NEAR list_p()
+EXTERNAL NEAR array_p()
+EXTERNAL NEAR local_p()
+EXTERNAL NEAR declare_p()
+EXTERNAL NEAR opencurly_p()
+EXTERNAL NEAR closecurly_p()
+EXTERNAL NEAR data_p()
+EXTERNAL NEAR stack_p()
+EXTERNAL NEAR code_p()
+EXTERNAL NEAR label_p()
+EXTERNAL NEAR start_p()
+EXTERNAL NEAR struct_p()
+EXTERNAL NEAR include_p()
+EXTERNAL NEAR do_p()
+EXTERNAL NEAR end_p()
+EXTERNAL NEAR repeat_p()
+EXTERNAL NEAR endrep_p()
+EXTERNAL NEAR endrepl_p()
+EXTERNAL NEAR exit_p()
+EXTERNAL NEAR exitl_p()
+EXTERNAL NEAR continue_p()
+EXTERNAL NEAR continuel_p()
+EXTERNAL NEAR loop_p()
+EXTERNAL NEAR if_p()
+EXTERNAL NEAR ifl_p()
+EXTERNAL NEAR else_p()
+EXTERNAL NEAR elsel_p()
+EXTERNAL NEAR endif_p()
+EXTERNAL NEAR external_p()
+EXTERNAL NEAR return_p()
+EXTERNAL NEAR movs_p()
+EXTERNAL NEAR lods_p()
+EXTERNAL NEAR stos_p()
+EXTERNAL NEAR scas_p()
+EXTERNAL NEAR far_p()
+EXTERNAL NEAR near_p()
+EXTERNAL NEAR windows_p()
+EXTERNAL NEAR save_p()
+EXTERNAL NEAR goto_p()
+EXTERNAL NEAR keep_p ()
+EXTERNAL NEAR saveon_p ()
+EXTERNAL NEAR module_p ()
+;------------------------
+DECLARE (DATA)
+
+DW 0
+LIST sourceblkst (BLKST)
+LIST objectblkst (BLKST)
+LIST globalblkst (BLKST)
+LIST localblkst (BLKST)
+LIST includeblkst (BLKST)
+
+WORD pspD
+WORD blocksparaD
+WORD lastparaD
+LIST mil = '.MIL',0
+WORD bavailD
+WORD maxblockD
+
+STRING sourcefileS (30)
+STRING objectfileS (30)
+STRING includefileS (30)
+
+LIST whitespace = 4,13,10,32,9
+
+LIST macros = 50 ; #macros
+       DW OFFSET default_t
+       DW OFFSET default_p
+       DW OFFSET hex_t
+       DW OFFSET hex_p
+       DW OFFSET decimal_t
+       DW OFFSET decimal_p
+       DW OFFSET bin_t
+       DW OFFSET bin_p
+       DW OFFSET byte_t
+       DW OFFSET byte_p
+       DW OFFSET word_t
+       DW OFFSET word_p
+       DW OFFSET string_t
+       DW OFFSET string_p
+       DW OFFSET message_t
+       DW OFFSET message_p
+       DW OFFSET list_t
+       DW OFFSET list_p
+       DW OFFSET array_t
+       DW OFFSET array_p
+       DW OFFSET local_t
+       DW OFFSET local_p
+       DW OFFSET declare_t
+       DW OFFSET declare_p
+       DW OFFSET opencurly_t
+       DW OFFSET opencurly_p
+       DW OFFSET closecurly_t
+       DW OFFSET closecurly_p
+       DW OFFSET data_t
+       DW OFFSET data_p
+       DW OFFSET stack_t
+       DW OFFSET stack_p
+       DW OFFSET code_t
+       DW OFFSET code_p
+       DW OFFSET label_t
+       DW OFFSET label_p
+       DW OFFSET start_t
+       DW OFFSET start_p
+       DW OFFSET struct_t
+       DW OFFSET struct_p
+       DW OFFSET include_t
+       DW OFFSET include_p
+       DW OFFSET do_t
+       DW OFFSET do_p
+       DW OFFSET end_t
+       DW OFFSET end_p
+       DW OFFSET repeat_t
+       DW OFFSET repeat_p
+       DW OFFSET endrep_t
+       DW OFFSET endrep_p
+       DW OFFSET endrepl_t
+       DW OFFSET endrepl_p
+       DW OFFSET exit_t
+       DW OFFSET exit_p
+       DW OFFSET exitl_t
+       DW OFFSET exitl_p
+       DW OFFSET continue_t
+       DW OFFSET continue_p
+       DW OFFSET continuel_t
+       DW OFFSET continuel_p
+       DW OFFSET loop_t
+       DW OFFSET loop_p
+       DW OFFSET if_t
+       DW OFFSET if_p
+       DW OFFSET ifl_t
+       DW OFFSET ifl_p
+       DW OFFSET else_t
+       DW OFFSET else_p
+       DW OFFSET elsel_t
+       DW OFFSET elsel_p
+       DW OFFSET endif_t
+       DW OFFSET endif_p
+       DW OFFSET external_t
+       DW OFFSET external_p
+       DW OFFSET return_t
+       DW OFFSET return_p
+       DW OFFSET movs_t
+       DW OFFSET movs_p
+       DW OFFSET stos_t
+       DW OFFSET stos_p
+       DW OFFSET lods_t
+       DW OFFSET lods_p
+       DW OFFSET scas_t
+       DW OFFSET scas_p
+       DW OFFSET far_t
+       DW OFFSET far_p
+       DW OFFSET near_t
+       DW OFFSET near_p
+       DW OFFSET windows_t
+       DW OFFSET windows_p
+       DW OFFSET save_t
+       DW OFFSET save_p
+       DW OFFSET goto_t
+       DW OFFSET goto_p
+       DW OFFSET keep_t
+       DW OFFSET keep_p
+       DW OFFSET saveon_t
+       DW OFFSET saveon_p
+       DW OFFSET module_t
+       DW OFFSET module_p
+
+; Macro Texts
+MESSAGE module_t = 'MODULE'
+MESSAGE default_t = 'DEFAULT'
+MESSAGE hex_t = 'HEX'
+MESSAGE decimal_t = 'DECIMAL'
+MESSAGE bin_t = 'BIN'
+MESSAGE byte_t = 'BYTE'
+MESSAGE word_t = 'WORD'
+MESSAGE string_t = 'STRING'
+MESSAGE message_t = 'MESSAGE'
+MESSAGE list_t = 'LIST'
+MESSAGE array_t = 'ARRAY'
+MESSAGE of_t = 'OF'
+MESSAGE local_t = 'LOCAL'
+MESSAGE declare_t = 'DECLARE'
+MESSAGE opencurly_t = '{'
+MESSAGE closecurly_t = '}'
+MESSAGE opensquare_t = '['
+MESSAGE closesquare_t = ']'
+MESSAGE data_t = 'DATA'
+MESSAGE udata_t = '_DATA'
+MESSAGE stack_t = 'STACK'
+MESSAGE code_t = 'CODE'
+MESSAGE ucode_t = '_TEXT'
+MESSAGE ends_t = 'ENDS'
+MESSAGE label_t = 'LABEL'
+MESSAGE db_t = 'DB '
+MESSAGE dw_t = 'DW '
+MESSAGE public_t = 'PUBLIC'
+MESSAGE start_t = 'START'
+MESSAGE struct_t = 'STRUCT'
+MESSAGE include_t = 'INCLUDE'
+MESSAGE do_t = 'DO'
+MESSAGE end_t = 'END'
+MESSAGE repeat_t = 'REPEAT'
+MESSAGE endrep_t = 'ENDREP'
+MESSAGE endrepl_t = 'ENDREPL'
+MESSAGE exit_t = 'EXIT'
+MESSAGE exitl_t = 'EXITL'
+MESSAGE continue_t = 'CONTINUE'
+MESSAGE continuel_t = 'CONTINUEL'
+MESSAGE loop_t = 'LOOP'
+MESSAGE if_t = 'IF'
+MESSAGE ifl_t = 'IFL'
+MESSAGE else_t = 'ELSE'
+MESSAGE elsel_t = 'ELSEL'
+MESSAGE endif_t = 'ENDIF'
+MESSAGE external_t = 'EXTERNAL'
+MESSAGE extrn_t = 'EXTRN'
+MESSAGE near_t = 'NEAR'
+MESSAGE far_t = 'FAR'
+MESSAGE windows_t = 'WINDOWS'
+MESSAGE movs_t = 'MOVS'
+MESSAGE stos_t = 'STOS'
+MESSAGE lods_t = 'LODS'
+MESSAGE scas_t = 'SCAS'
+MESSAGE cld_t = 'CLD'
+MESSAGE std_t = 'STD'
+MESSAGE rep_t = 'REP'
+MESSAGE movsb_t = 'MOVSB'
+MESSAGE movsw_t = 'MOVSW'
+MESSAGE save_t = 'SAVE'
+MESSAGE goto_t = 'GOTO'
+MESSAGE keep_t = 'KEEP'
+MESSAGE saveon_t = 'SAVEON'
+MESSAGE as_t = 'AS'
+MESSAGE plus1_t = '+1'
+MESSAGE jmpplus4_t = 'JMP $+4'
+MESSAGE jmpplus5_t = 'JMP $+5'
+MESSAGE dollarplus4_t = '$+4'
+MESSAGE dupzero_t = 'DUP (0)'
+MESSAGE comma_t = ','
+MESSAGE space_t = ' '
+MESSAGE equal_t = '='
+MESSAGE zero_t = '0'
+MESSAGE ax_t = 'AX'
+MESSAGE al_t = 'AL'
+MESSAGE sp_t = 'SP'
+MESSAGE mov_t = 'MOV'
+MESSAGE add_t = 'ADD'
+MESSAGE sub_t = 'SUB'
+MESSAGE inc_t = 'INC'
+MESSAGE dec_t = 'DEC'
+MESSAGE push_t = 'PUSH'
+MESSAGE pop_t = 'POP'
+MESSAGE offset_t = 'OFFSET '
+MESSAGE effect_t = 'LEA'
+MESSAGE lseg_t = 'LXS'
+MESSAGE byteptr_t = 'BYTE PTR '
+MESSAGE wordptr_t = 'WORD PTR '
+MESSAGE equ_t = 'EQU '
+MESSAGE procnear_t = 'PROC NEAR'
+MESSAGE procfar_t = 'PROC FAR'
+MESSAGE farptr_t = 'FAR PTR'
+MESSAGE endp_t = 'ENDP'
+MESSAGE call_t = 'CALL'
+MESSAGE ret_t = 'RET'
+MESSAGE return_t = 'RETURN'
+MESSAGE pushbp_movbp_t = 'PUSH BP\13\10 MOV BP,SP'
+MESSAGE movsp_t = 'MOV SP,BP'
+MESSAGE popbp_t = 'POP BP'
+MESSAGE bp_t = 'BP'
+MESSAGE jmpshort_t = 'JMP SHORT'
+MESSAGE jmplong_t = 'JMP'
+MESSAGE cmp_t = 'CMP'
+MESSAGE winprocstart = 'MOV AX,DS\13\10 NOP'
+MESSAGE incbp_t = 'INC BP'
+MESSAGE pushmovds_t = 'PUSH DS\13\10 MOV DS,AX'
+MESSAGE leasp_t = 'LEA SP,-2[BP]'
+MESSAGE winprocend = 'POP DS'
+MESSAGE decbp_t = 'DEC BP'
+MESSAGE pushsidi = 'PUSH SI\13\10 PUSH DI'
+MESSAGE popdisi = 'POP DI\13\10 POP SI'
+MESSAGE datasegment = 'DATA SEGMENT PUBLIC \39 DATA\39'
+MESSAGE datasegmentw = '_DATA SEGMENT WORD PUBLIC \39 DATA\39'
+MESSAGE nodataseg = ',DS:CODE'
+MESSAGE codesegment1 = 'CODE SEGMENT PUBLIC \39 CODE\39\13\10 ASSUME CS:CODE'
+MESSAGE codesegment1w = '_TEXT SEGMENT WORD PUBLIC \39 CODE\39\13\10 ASSUME CS:_TEXT'
+MESSAGE codesegment2 = ',DS:DATA'
+MESSAGE codesegment2w = ',DS:_DATA'
+MESSAGE stacksegment = 'STACK SEGMENT STACK \39 STACK\39'
+MESSAGE usersegment1 = 'SEGMENT PUBLIC \39 CODE\39\13\10 ASSUME CS:'
+MESSAGE usersegment1w = 'SEGMENT WORD PUBLIC \39 CODE\39\13\10 ASSUME CS:'
+MESSAGE usersegment2 = ',DS:DATA'
+MESSAGE usersegment2w = ',DS:_DATA'
+
+BYTE userseg
+BYTE newuserseg
+LIST usersegname (20)
+LIST newusersegname (20)
+
+LIST registers = 20
+          DB ASSIGN_REGW,'AX',0
+          DB ASSIGN_REGW,'BX',0
+          DB ASSIGN_REGW,'CX',0
+          DB ASSIGN_REGW,'DX',0
+          DB ASSIGN_REGB,'AL',0
+          DB ASSIGN_REGB,'AH',0
+          DB ASSIGN_REGB,'BL',0
+          DB ASSIGN_REGB,'BH',0
+          DB ASSIGN_REGB,'CL',0
+          DB ASSIGN_REGB,'CH',0
+          DB ASSIGN_REGB,'DL',0
+          DB ASSIGN_REGB,'DH',0
+          DB ASSIGN_REGW,'BP',0
+          DB ASSIGN_REGW,'SI',0
+          DB ASSIGN_REGW,'DI',0
+          DB ASSIGN_REGS,'ES',0
+          DB ASSIGN_REGS,'DS',0
+          DB ASSIGN_REGS,'CS',0
+          DB ASSIGN_REGS,'SS',0
+          DB ASSIGN_REGW,'SP',0
+
+LIST operations = 7
+           DB ASSIGN_EQUAL,'=',0,0
+           DB ASSIGN_ADDEQUAL,'+=',0
+           DB ASSIGN_SUBEQUAL,'-=',0
+           DB ASSIGN_INC,'++',0
+           DB ASSIGN_DEC,'--',0
+           DB ASSIGN_ADD,'+',0,0
+           DB ASSIGN_SUB,'-',0,0
+
+LIST conditions = 6
+           DB ASSIGN_EQUAL,'=',0,0
+           DB ASSIGN_NOTEQUAL,'<>',0
+           DB ASSIGN_LESS,'<',0,0
+           DB ASSIGN_GREATER,'>',0,0
+           DB ASSIGN_ELESS,'<=',0
+           DB ASSIGN_EGREATER,'>=',0
+
+BYTE default_number
+BYTE default_data
+
+BYTE status 
+            ; this is the overall status of the translator
+            ; 0  COMMENCED
+            ; 1  CREATING STACK SEGMENT
+            ; 2  CREATING DATA SEGMENT
+            ; 3  CREATING CODE SEGMENT
+            ; 4  DEFAULT INSTRUCTION
+            ; 5  DECLARE INSTRUCTION
+
+BYTE declared_segment
+; flags to tell which segs we have compiled
+BYTE whichsegs
+
+BYTE sourcelinelen = 255
+LIST sourceline (200)
+BYTE objectlinelen = 255
+LIST objectline (200)
+BYTE inlinelen = 255
+LIST inline (200)
+
+LIST number_string (40)
+LIST variable_string (200)
+
+LIST testline = '  DEFAULT (BYTE)',13,10,0
+
+WORD cblkst_blkD
+WORD cblkst_posD
+WORD global_blkD
+WORD global_posD
+WORD local_blkD
+WORD local_posD
+WORD proc_blkD
+WORD proc_posD
+WORD paras_blkD
+WORD paras_posD
+
+LIST procblkst (BLKST)
+LIST parasblkst (BLKST)
+LIST current_proc_name (80)
+LIST procdef_string (80)
+LIST proccall_string (80)
+LIST procparam_string (80)
+
+MESSAGE parametername = 'P_000'
+MESSAGE parameteroffset = '04'
+
+BYTE main_proc
+MESSAGE main_t = 'main'
+MESSAGE ret_by = '0000'
+BYTE number_paras
+BYTE farflag
+BYTE windowsflag
+BYTE winproc_flag
+BYTE withinproc
+BYTE localcount
+
+MESSAGE localdigits = '00'
+
+BYTE regword
+BYTE assigncode
+BYTE opcode
+BYTE offsetflag
+BYTE effectflag
+
+LIST assigna1 (50)
+LIST assigna2 (50)
+LIST assignop (30)
+
+LIST struct_string (80)
+LIST struct_lastname (20)
+MESSAGE struct_lastcount = '0000'
+                 DB 30 DUP (0)
+WORD docountD
+
+MESSAGE dolabel = 'DO_'
+MESSAGE endlabel = 'EN_'
+MESSAGE donumber = '000'
+
+BYTE exitlong
+
+BYTE statestack
+DB 3*MAXDO+3 DUP (0)
+WORD statestackptrD = OFFSET statestack
+
+BYTE makeallpublic
+BYTE screenoutput
+BYTE nofileoutput
+BYTE quiet
+
+; save on call
+BYTE keep
+BYTE saveon
+LIST keep_list (MAXKEEP*2)
+LIST saveon_list (MAXKEEP*2)
+
+; error messages
+BYTE error_code
+
+MESSAGE nofilespec = 'Usage: MIL [options] <sourcefile> [objectfile]'
+
+BYTE errors
+
+MESSAGE invalidprocdef = 'Type of actual parameters must be defined'
+MESSAGE incorrectnumberparas = 'Incorrect number of parameters in call'
+MESSAGE cannotassign = 'Cannot assign operands'
+MESSAGE invalidassign = 'Type mismatch'
+MESSAGE notindexreg = 'Must be Index Register'
+MESSAGE undefined = 'Undefined operand'
+MESSAGE invalidoperator = 'Operator not defined'
+MESSAGE nosymbolspace = 'Insufficient symbol space'
+MESSAGE notnumeric = 'Numerical value expected'
+MESSAGE badloopcount = 'Unbalanced statements in procedure'
+MESSAGE noclosebracket = 'No closing bracket'
+MESSAGE noclosequote = 'No closing quote'
+MESSAGE invalidstring = 'Incorrect syntax for STRING'
+MESSAGE invalidmessage = 'Incorrect syntax for MESSAGE'
+MESSAGE invalidlist = 'Incorrect syntax for LIST'
+MESSAGE nolabel = 'Label name expected'
+MESSAGE toomanynestedDOs = 'Too many nested loops'
+MESSAGE noDOtoend = 'END does not match DO'
+MESSAGE noREPEATtoend = 'ENDREP does not match REPEAT'
+MESSAGE EXIToutside = 'Cannot use EXIT outside loop'
+MESSAGE nobracket = 'Bracket expected'
+MESSAGE notflag = 'Flag expected - C, NC, Z, NZ'
+MESSAGE noIF = 'ENDIF does not match IF'
+MESSAGE nottype = 'Not a valid data type'
+MESSAGE noneedforopencurly = 'Bracket out of place'
+MESSAGE noopencurly = 'Must have bracket here'
+MESSAGE invaliddefault = 'Incorrect syntax for DEFAULT'
+MESSAGE cannotputhere = 'Symbol not valid here'
+MESSAGE loopoutsideloop = 'Cannot use LOOP outside loop'
+MESSAGE invalidif = 'Incorrect syntax for a conditional expression'
+MESSAGE noincludename = 'Include name must be specified'
+MESSAGE cannotopenfile = 'Cannot open file'
+MESSAGE mustspecifyborw = 'Must specify B, W or D'
+MESSAGE mustspecifyzornz = 'Must specify Z or NZ'
+MESSAGE invalidstringoperation = 'Invalid string operation'
+MESSAGE insufmem = 'Insufficient memory'
+MESSAGE notregister = 'Must specify a register'
+MESSAGE cannotsaveagain = 'Cannot use SAVE more then once in procedure'
+MESSAGE invalidcodedec = 'Invalid DECLARE declaration, assuming CODE segment'
+MESSAGE invalidreg = 'Invalid register'
+MESSAGE toomanyregs = 'Too many registers'
+MESSAGE moduledefined = 'MODULE already defined'
+MESSAGE invalidmodule = 'Invalid MODULE type'
+MESSAGE unknown = 'Unrecognised command'
+MESSAGE invalidarray = 'Incorrect syntax for ARRAY'
+MESSAGE invalidof = 'Invalid syntax for OF'
+TOPLVL D	éÄõÄÄÄÄÄæ8S   ∞∞  L`ˇ                                                                                                                                                               – ‘1      ÅÄOKI Laserline 6 Port Ä    
