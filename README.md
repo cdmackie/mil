@@ -1,7 +1,7 @@
 # MIL
 
-MIL is a pre-processor language for 8086 assembly, written by Colin Mackie (M.I.
-Systems) between 1991 and 1993. You write structured code (typed variables,
+MIL is a pre-processor language for 8086 assembly, written between 1991 and 1993 and
+released as the M.I. Systems Macro Translator. You write structured code (typed variables,
 procedures with parameters and locals, `IF`/`ELSE`, `DO`/`REPEAT` loops, assignments
 such as `total += 10`), and MIL translates it into Microsoft Macro Assembler (MASM)
 source. Any line it doesn't recognise passes straight through, so plain 8086
@@ -30,8 +30,8 @@ The repository has two original snapshots, each dated to match its files:
 | MIL 1.20 source | 30 April 1992 | the source from `MIL120.ZIP`, as found |
 | MIL 1.25 source and `MIL.EXE` | 27 January 1993 | the last source, and the `MIL.EXE` built from it |
 
-`git diff` between them shows nine months of 1992 development. `VERSIONS` is Colin's
-own log of every version from 1.0 to 1.24, and `BUGS` lists the bugs he tracked. The
+`git diff` between them shows the changes from 1.20 to 1.25. `VERSIONS` logs every
+version from 1.0 to 1.24, and `BUGS` lists the known bugs and which are fixed. The
 binaries of earlier versions that survive (1.17, 1.19, 1.20 and 1.24) are attached to
 the repository's releases.
 
@@ -54,7 +54,7 @@ a 1992 disk cache for MS-DOS.
 | `MORDER.MIL`, `MSTACK.MIL`, `MEND.MIL` | segment order, the stack, and the end of the program |
 | `MMAKE.CTL`, `MLINK.CTL`, `MA.BAT` | the original makefile, linker response file and the batch file that runs them |
 | `MLINKE.CTL`, `MSAVE.CTL`, `DB.BAT` | a packed-EXE link, a backup to floppy, and debugging with SYMDEB |
-| `VERSIONS`, `BUGS` | Colin's version log and bug list |
+| `VERSIONS`, `BUGS` | the version log and the bug list |
 | `build.sh` | rebuild `MIL.EXE` under DOSBox-X |
 
 The source files are kept exactly as found, so they have DOS (CR LF) line endings and
