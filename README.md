@@ -79,6 +79,10 @@ directory. DOSBox-X is expected in `C:\DOSBox-X` (or set `DOSBOX`). The committe
 To build a program of your own: `MIL -p prog` writes `PROG.ASM`, then
 `MASM prog.ASM /Z;` and `LINK prog;` as usual.
 
+## Credits
+
+MIL was inspired by Steve Brimley's MSS pre-processor, used at TopLevel Computing.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
