@@ -57,9 +57,10 @@ a 1992 disk cache for MS-DOS.
 | `VERSIONS`, `BUGS` | the version log and the bug list |
 | `build.sh` | rebuild `MIL.EXE` under DOSBox-X |
 
-The source files are kept exactly as found, so they have DOS (CR LF) line endings and
-some end with bytes left by the TopCopy word processor they were edited in. MIL needs
-the CR LF line endings.
+The source files have DOS (CR LF) line endings, which MIL needs. As found, each also
+ended with a Ctrl-Z and a block of settings saved by the TopCopy word processor it was
+edited in; those trailers are removed in the current files (DOS tools stop reading at
+the Ctrl-Z, so the build is unchanged) and kept in the 1992 and 1993 commits.
 
 ## Building
 
